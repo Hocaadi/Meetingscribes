@@ -1,0 +1,27 @@
+{
+  "name": "meetingscribe",
+  "version": "1.0.0",
+  "description": "AI-powered meeting recording to document converter",
+  "main": "index.js",
+  "scripts": {
+    "start": "concurrently \"npm run backend\" \"npm run frontend\"",
+    "backend": "cd backend && npm run dev",
+    "frontend": "cd frontend && npm start",
+    "install-all": "npm install && cd backend && npm install && cd ../frontend && npm install",
+    "build": "node build.js",
+    "vercel-build": "node build.js",
+    "prod": "cd backend && NODE_ENV=production npm start"
+  },
+  "keywords": [
+    "meeting",
+    "transcription",
+    "ai",
+    "openai",
+    "whisper"
+  ],
+  "author": "Aadarsh Rathore",
+  "license": "MIT",
+  "dependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

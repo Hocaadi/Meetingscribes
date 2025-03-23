@@ -1,0 +1,13 @@
+{
+  "version": 2,
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "https://meetingscribe-backend.onrender.com/api/$1" }
+  ],
+  "env": {
+    "FRONTEND_URL": "https://meetingscribe.vercel.app",
+    "NODE_ENV": "production",
+    "REACT_APP_API_URL": "https://meetingscribe-backend.onrender.com"
+  }
+} 

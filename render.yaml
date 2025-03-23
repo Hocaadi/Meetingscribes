@@ -1,0 +1,35 @@
+services:
+  # Backend Service
+  - type: web
+    name: meetingscribe-backend
+    env: node
+    repo: https://github.com/yourusername/meetingscribe.git # Update with your repo
+    buildCommand: cd backend && npm install
+    startCommand: cd backend && node server.js
+    healthCheckPath: /api/health
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: NODE_ENV
+        value: production
+      - key: FRONTEND_URL
+        fromService:
+          name: meetingscribe-frontend
+          type: web
+          property: url
+      - key: OPENAI_API_KEY
+        sync: false # This means it will be manually set in the Render dashboard
+    
+  # Frontend Service
+  - type: web
+    name: meetingscribe-frontend
+    env: static
+    repo: https://github.com/yourusername/meetingscribe.git # Update with your repo
+    buildCommand: cd frontend && npm install && npm run build
+    staticPublishPath: ./frontend/build
+    envVars:
+      - key: REACT_APP_API_URL
+        fromService:
+          name: meetingscribe-backend
+          type: web
+          property: url 
