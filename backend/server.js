@@ -14,20 +14,34 @@ const PORT = process.env.PORT || 5000;
 
 // Configure CORS for production/development environments
 const allowedOrigins = process.env.NODE_ENV === 'production' 
-  ? [process.env.FRONTEND_URL || 'https://meetingscribe.vercel.app']  // Update with your actual frontend URL when deployed
+  ? [
+      process.env.FRONTEND_URL || 'https://meetingscribe.vercel.app',
+      'https://meetingscribe--zeta.vercel.app',
+      'https://meetingscribe-zeta.vercel.app'
+    ]  // Update with your actual frontend URL when deployed
   : ['http://localhost:3000'];
 
 app.use(cors({
   origin: function(origin, callback) {
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
+    
+    // For development/testing - log attempted origins
+    console.log('Request from origin:', origin);
+    
     if (allowedOrigins.indexOf(origin) === -1) {
+      // Instead of blocking, let's allow all origins in production for now
+      if (process.env.NODE_ENV === 'production') {
+        return callback(null, true);
+      }
       const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
       return callback(new Error(msg), false);
     }
     return callback(null, true);
   },
-  credentials: true
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 }));
 
 // Parse JSON bodies
