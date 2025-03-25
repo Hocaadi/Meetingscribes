@@ -33,11 +33,15 @@ const openai = new OpenAI({
 /**
  * Process audio file to generate a meeting analysis report
  * @param {string} audioFilePath - Path to the uploaded audio file
+ * @param {string} userCustomInstructions - Optional custom instructions from the user
  * @returns {Promise<Object>} - Object containing report file path and name
  */
-async function processAudio(audioFilePath) {
+async function processAudio(audioFilePath, userCustomInstructions = '') {
   try {
     console.log('Processing audio file:', audioFilePath);
+    if (userCustomInstructions) {
+      console.log('User provided custom instructions for analysis');
+    }
 
     // Step 1: Convert audio to required format (16kHz, mono, wav) if needed
     const convertedFilePath = await convertAudioFormat(audioFilePath);
@@ -50,7 +54,7 @@ async function processAudio(audioFilePath) {
 
     // Step 3: Extract structured insights using OpenAI API
     console.log('Extracting structured insights...');
-    const structuredInsights = await extractStructuredInsights(transcript);
+    const structuredInsights = await extractStructuredInsights(transcript, userCustomInstructions);
     console.log('Insights extracted successfully');
 
     // Step 4: Generate document with results
@@ -157,15 +161,16 @@ async function transcribeAudio(audioFilePath) {
 /**
  * Extract structured insights from the transcript using OpenAI API with the SDK
  * @param {string} transcript - Transcript text
+ * @param {string} userCustomInstructions - Optional custom instructions from the user
  * @returns {Promise<string>} - Structured insights text
  */
-async function extractStructuredInsights(transcript) {
+async function extractStructuredInsights(transcript, userCustomInstructions = '') {
   if (!transcript || transcript.trim() === '') {
     throw new Error('Cannot analyze empty transcript');
   }
   
   try {
-    const customInstructions = `
+    const systemInstructions = `
     You are a Business document AI assistant and an expert that analyzes meeting transcripts to extract structured insights.
     From the following transcript, identify:
     1. Key discussion points.
@@ -179,10 +184,16 @@ async function extractStructuredInsights(transcript) {
     - Decisions/Outcomes:
     `;
     
-    const userQuery = `Analyze the following meeting transcript:\n${transcript}`;
+    // Prepare user query with transcript and any custom instructions
+    let userQuery = `Analyze the following meeting transcript:\n${transcript}`;
+    
+    // Add user custom instructions if provided
+    if (userCustomInstructions && userCustomInstructions.trim() !== '') {
+      userQuery += `\n\nAdditional analysis instructions: ${userCustomInstructions}`;
+    }
 
     let attempts = 0;
-    const maxAttempts = 3;
+    const maxAttempts = 2; // Reduced from 3 to 2 as requested
     
     while (attempts < maxAttempts) {
       try {
@@ -192,7 +203,7 @@ async function extractStructuredInsights(transcript) {
           temperature: TEMPERATURE,
           store: true,
           messages: [
-            { role: 'system', content: customInstructions },
+            { role: 'system', content: systemInstructions },
             { role: 'user', content: userQuery }
           ]
         });

@@ -85,9 +85,15 @@ app.post('/api/upload', upload.single('audioFile'), async (req, res) => {
     console.log(`File path: ${req.file.path}`);
     console.log(`File size: ${req.file.size} bytes`);
     
+    // Get custom instructions from request body if available
+    const userCustomInstructions = req.body.customInstructions || '';
+    if (userCustomInstructions) {
+      console.log('Custom instructions received from user');
+    }
+    
     // Process the audio file
     try {
-      const result = await processAudio(req.file.path);
+      const result = await processAudio(req.file.path, userCustomInstructions);
       return res.status(200).json({ 
         message: 'File processed successfully',
         reportPath: result.reportPath,

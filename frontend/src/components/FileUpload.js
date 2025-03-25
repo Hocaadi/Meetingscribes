@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Container, Row, Col, Form, Button, ProgressBar, Alert } from 'react-bootstrap';
+import { Container, Row, Col, Form, Button, ProgressBar, Alert, Card, Accordion } from 'react-bootstrap';
 import axios from 'axios';
 import { saveAs } from 'file-saver';
 import config from '../config';
@@ -10,6 +10,8 @@ const FileUpload = () => {
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
+  const [customInstructions, setCustomInstructions] = useState('');
+  const [showCustomInstructions, setShowCustomInstructions] = useState(false);
   const fileInputRef = useRef(null);
   const [dragActive, setDragActive] = useState(false);
 
@@ -70,6 +72,10 @@ const FileUpload = () => {
     }
   };
 
+  const handleCustomInstructionsChange = (e) => {
+    setCustomInstructions(e.target.value);
+  };
+
   const handleUpload = async () => {
     if (!file) {
       setError('Please select a file to upload');
@@ -83,6 +89,11 @@ const FileUpload = () => {
       
       const formData = new FormData();
       formData.append('audioFile', file);
+      
+      // Add custom instructions if provided
+      if (customInstructions.trim()) {
+        formData.append('customInstructions', customInstructions.trim());
+      }
       
       const response = await axios.post(config.UPLOAD_ENDPOINT, formData, {
         headers: {
@@ -148,10 +159,16 @@ const FileUpload = () => {
     setError(null);
     setProgress(0);
     setUploading(false);
+    setCustomInstructions('');
+    setShowCustomInstructions(false);
     
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
+  };
+
+  const toggleCustomInstructions = () => {
+    setShowCustomInstructions(!showCustomInstructions);
   };
 
   return (
@@ -192,9 +209,44 @@ const FileUpload = () => {
           )}
           
           {file && !uploading && !result && (
-            <div className="file-info p-3 mt-3">
-              <p className="mb-1"><strong>Selected File:</strong> {file.name}</p>
-              <p className="mb-0"><strong>Size:</strong> {(file.size / (1024 * 1024)).toFixed(2)} MB</p>
+            <>
+              <div className="file-info p-3 mt-3">
+                <p className="mb-1"><strong>Selected File:</strong> {file.name}</p>
+                <p className="mb-0"><strong>Size:</strong> {(file.size / (1024 * 1024)).toFixed(2)} MB</p>
+              </div>
+              
+              <Card className="mt-3 custom-instructions-card">
+                <Card.Header 
+                  className="d-flex justify-content-between align-items-center custom-instructions-header"
+                  style={{ cursor: 'pointer', backgroundColor: '#f8f9fa', borderBottom: showCustomInstructions ? '1px solid #dee2e6' : 'none' }}
+                  onClick={toggleCustomInstructions}
+                >
+                  <div>
+                    <i className="bi bi-lightbulb me-2" style={{ color: '#ffc107' }}></i>
+                    <span>Custom Analysis Instructions</span>
+                  </div>
+                  <i className={`bi ${showCustomInstructions ? 'bi-chevron-up' : 'bi-chevron-down'}`}></i>
+                </Card.Header>
+                
+                {showCustomInstructions && (
+                  <Card.Body>
+                    <Form.Group>
+                      <Form.Label>Add your custom instructions for the analysis:</Form.Label>
+                      <Form.Control
+                        as="textarea"
+                        rows={3}
+                        placeholder="E.g., Focus on action items related to marketing, Extract all client names mentioned, Identify budget discussions..."
+                        value={customInstructions}
+                        onChange={handleCustomInstructionsChange}
+                      />
+                      <Form.Text className="text-muted">
+                        Your instructions will be used to enhance the AI analysis of your meeting transcript.
+                      </Form.Text>
+                    </Form.Group>
+                  </Card.Body>
+                )}
+              </Card>
+              
               <div className="d-flex justify-content-end mt-3">
                 <Button variant="secondary" className="me-2" onClick={handleReset}>
                   Cancel
@@ -203,7 +255,7 @@ const FileUpload = () => {
                   Process Audio
                 </Button>
               </div>
-            </div>
+            </>
           )}
           
           {uploading && (
