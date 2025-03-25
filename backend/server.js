@@ -91,9 +91,15 @@ app.post('/api/upload', upload.single('audioFile'), async (req, res) => {
       console.log('Custom instructions received from user');
     }
     
+    // Get meeting topic from request body if available
+    const meetingTopic = req.body.meetingTopic || '';
+    if (meetingTopic) {
+      console.log(`Meeting topic selected: ${meetingTopic}`);
+    }
+    
     // Process the audio file
     try {
-      const result = await processAudio(req.file.path, userCustomInstructions);
+      const result = await processAudio(req.file.path, userCustomInstructions, meetingTopic);
       return res.status(200).json({ 
         message: 'File processed successfully',
         reportPath: result.reportPath,

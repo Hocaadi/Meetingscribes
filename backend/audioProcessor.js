@@ -34,13 +34,20 @@ const openai = new OpenAI({
  * Process audio file to generate a meeting analysis report
  * @param {string} audioFilePath - Path to the uploaded audio file
  * @param {string} userCustomInstructions - Optional custom instructions from the user
+ * @param {string} meetingTopic - Optional meeting topic/domain context
  * @returns {Promise<Object>} - Object containing report file path and name
  */
-async function processAudio(audioFilePath, userCustomInstructions = '') {
+async function processAudio(audioFilePath, userCustomInstructions = '', meetingTopic = '') {
   try {
     console.log('Processing audio file:', audioFilePath);
+    
+    // Log context information for better debugging
     if (userCustomInstructions) {
       console.log('User provided custom instructions for analysis');
+    }
+    
+    if (meetingTopic) {
+      console.log('Meeting topic provided:', meetingTopic);
     }
 
     // Step 1: Convert audio to required format (16kHz, mono, wav) if needed
@@ -54,14 +61,14 @@ async function processAudio(audioFilePath, userCustomInstructions = '') {
 
     // Step 3: Extract structured insights using OpenAI API
     console.log('Extracting structured insights...');
-    const structuredInsights = await extractStructuredInsights(transcript, userCustomInstructions);
+    const structuredInsights = await extractStructuredInsights(transcript, userCustomInstructions, meetingTopic);
     console.log('Insights extracted successfully');
 
     // Step 4: Generate document with results
     console.log('Generating report document...');
     const reportFileName = `meeting_analysis_report_${Date.now()}.docx`;
     const reportPath = path.join(__dirname, 'uploads', reportFileName);
-    await generateReport(transcript, structuredInsights, reportPath);
+    await generateReport(transcript, structuredInsights, reportPath, meetingTopic);
     console.log('Report generated successfully at:', reportPath);
 
     // Clean up temporary files
@@ -162,9 +169,10 @@ async function transcribeAudio(audioFilePath) {
  * Extract structured insights from the transcript using OpenAI API with the SDK
  * @param {string} transcript - Transcript text
  * @param {string} userCustomInstructions - Optional custom instructions from the user
+ * @param {string} meetingTopic - Optional meeting topic/domain context
  * @returns {Promise<string>} - Structured insights text
  */
-async function extractStructuredInsights(transcript, userCustomInstructions = '') {
+async function extractStructuredInsights(transcript, userCustomInstructions = '', meetingTopic = '') {
   if (!transcript || transcript.trim() === '') {
     throw new Error('Cannot analyze empty transcript');
   }
@@ -184,8 +192,15 @@ async function extractStructuredInsights(transcript, userCustomInstructions = ''
     - Decisions/Outcomes:
     `;
     
-    // Prepare user query with transcript and any custom instructions
+    // Prepare user query with transcript and any context information
     let userQuery = `Analyze the following meeting transcript:\n${transcript}`;
+    
+    // Add meeting topic context if provided
+    if (meetingTopic && meetingTopic.trim() !== '') {
+      // Get a user-friendly label for the topic
+      const topicLabel = meetingTopic.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+      userQuery = `Analyze the following meeting transcript from a ${topicLabel} meeting:\n${transcript}`;
+    }
     
     // Add user custom instructions if provided
     if (userCustomInstructions && userCustomInstructions.trim() !== '') {
@@ -193,7 +208,7 @@ async function extractStructuredInsights(transcript, userCustomInstructions = ''
     }
 
     let attempts = 0;
-    const maxAttempts = 2; // Reduced from 3 to 2 as requested
+    const maxAttempts = 2;
     
     while (attempts < maxAttempts) {
       try {
@@ -235,14 +250,22 @@ async function extractStructuredInsights(transcript, userCustomInstructions = ''
  * @param {string} transcript - Transcript text
  * @param {string} structuredInsights - Structured insights text
  * @param {string} outputPath - Path to save the document
+ * @param {string} meetingTopic - Optional meeting topic for the report header
  * @returns {Promise<void>}
  */
-async function generateReport(transcript, structuredInsights, outputPath) {
+async function generateReport(transcript, structuredInsights, outputPath, meetingTopic = '') {
   try {
+    // Get report title with topic if available
+    let reportTitle = "Meeting Analysis Report";
+    if (meetingTopic && meetingTopic.trim() !== '') {
+      const topicLabel = meetingTopic.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+      reportTitle = `${topicLabel} Meeting Analysis Report`;
+    }
+    
     // Create sections array with content
     const children = [
       new Paragraph({
-        text: "Meeting Analysis Report",
+        text: reportTitle,
         heading: HeadingLevel.HEADING_1
       }),
       new Paragraph({
@@ -284,7 +307,7 @@ async function generateReport(transcript, structuredInsights, outputPath) {
     // Create document with proper structure
     const doc = new Document({
       creator: "MeetingScribe",
-      title: "Meeting Analysis Report",
+      title: reportTitle,
       description: "AI-generated transcript and analysis",
       sections: [
         {

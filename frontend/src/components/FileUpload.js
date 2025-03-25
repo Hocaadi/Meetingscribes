@@ -1,8 +1,26 @@
 import React, { useState, useRef } from 'react';
-import { Container, Row, Col, Form, Button, ProgressBar, Alert, Card, Accordion } from 'react-bootstrap';
+import { Container, Row, Col, Form, Button, ProgressBar, Alert, Card } from 'react-bootstrap';
 import axios from 'axios';
 import { saveAs } from 'file-saver';
 import config from '../config';
+
+// Meeting topics options
+const MEETING_TOPICS = [
+  { value: "", label: "Select a topic (optional)" },
+  { value: "project_update", label: "Project Update/Status" },
+  { value: "strategy", label: "Strategy/Planning" },
+  { value: "sales", label: "Sales/Revenue" },
+  { value: "marketing", label: "Marketing/Campaigns" },
+  { value: "product", label: "Product Development" },
+  { value: "hr", label: "HR/People Management" },
+  { value: "finance", label: "Finance/Budget" },
+  { value: "operations", label: "Operations" },
+  { value: "customer", label: "Customer Relations" },
+  { value: "technical", label: "Technical Discussion" },
+  { value: "brainstorming", label: "Brainstorming Session" },
+  { value: "training", label: "Training/Learning" },
+  { value: "other", label: "Other" }
+];
 
 const FileUpload = () => {
   const [file, setFile] = useState(null);
@@ -12,6 +30,7 @@ const FileUpload = () => {
   const [result, setResult] = useState(null);
   const [customInstructions, setCustomInstructions] = useState('');
   const [showCustomInstructions, setShowCustomInstructions] = useState(false);
+  const [meetingTopic, setMeetingTopic] = useState('');
   const fileInputRef = useRef(null);
   const [dragActive, setDragActive] = useState(false);
 
@@ -72,6 +91,10 @@ const FileUpload = () => {
     }
   };
 
+  const handleTopicChange = (e) => {
+    setMeetingTopic(e.target.value);
+  };
+
   const handleCustomInstructionsChange = (e) => {
     setCustomInstructions(e.target.value);
   };
@@ -89,6 +112,11 @@ const FileUpload = () => {
       
       const formData = new FormData();
       formData.append('audioFile', file);
+      
+      // Add meeting topic if selected
+      if (meetingTopic) {
+        formData.append('meetingTopic', meetingTopic);
+      }
       
       // Add custom instructions if provided
       if (customInstructions.trim()) {
@@ -161,6 +189,7 @@ const FileUpload = () => {
     setUploading(false);
     setCustomInstructions('');
     setShowCustomInstructions(false);
+    setMeetingTopic('');
     
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
@@ -214,6 +243,31 @@ const FileUpload = () => {
                 <p className="mb-1"><strong>Selected File:</strong> {file.name}</p>
                 <p className="mb-0"><strong>Size:</strong> {(file.size / (1024 * 1024)).toFixed(2)} MB</p>
               </div>
+              
+              <Card className="mt-3 topic-selection-card">
+                <Card.Body>
+                  <Form.Group>
+                    <Form.Label>
+                      <i className="bi bi-tag me-2" style={{ color: '#4a86e8' }}></i>
+                      Meeting Topic
+                    </Form.Label>
+                    <Form.Select 
+                      value={meetingTopic}
+                      onChange={handleTopicChange}
+                      className="meeting-topic-select"
+                    >
+                      {MEETING_TOPICS.map(topic => (
+                        <option key={topic.value} value={topic.value}>
+                          {topic.label}
+                        </option>
+                      ))}
+                    </Form.Select>
+                    <Form.Text className="text-muted">
+                      Selecting a topic helps the AI better understand the context of your meeting.
+                    </Form.Text>
+                  </Form.Group>
+                </Card.Body>
+              </Card>
               
               <Card className="mt-3 custom-instructions-card">
                 <Card.Header 
