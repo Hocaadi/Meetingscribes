@@ -3,6 +3,7 @@ import { Container, Row, Col, Form, Button, ProgressBar, Alert, Card } from 'rea
 import axios from 'axios';
 import { saveAs } from 'file-saver';
 import config from '../config';
+import 'bootstrap-icons/font/bootstrap-icons.css';
 
 // Meeting topics options
 const MEETING_TOPICS = [
@@ -211,38 +212,38 @@ const FileUpload = () => {
           )}
           
           {!result && !uploading && (
-            <div 
-              className={`upload-box ${dragActive ? 'active' : ''}`}
-              onDragEnter={handleDrag}
-              onDragOver={handleDrag}
-              onDragLeave={handleDrag}
-              onDrop={handleDrop}
-              onClick={() => fileInputRef.current.click()}
-            >
-              <i className="bi bi-cloud-arrow-up" style={{ fontSize: '3rem', color: '#4a86e8' }}></i>
-              <h3 className="mt-3">Upload Audio File</h3>
-              <p className="text-muted">
-                Drag & drop your audio file here, or click to browse
-              </p>
-              <p className="text-muted small">
-                Supported formats: MP3, WAV, M4A, FLAC, etc. (Max 50MB)
-              </p>
-              <Form.Control
-                type="file"
-                ref={fileInputRef}
-                onChange={handleFileChange}
-                accept="audio/*"
-                style={{ display: 'none' }}
-              />
-            </div>
-          )}
-          
-          {file && !uploading && !result && (
             <>
-              <div className="file-info p-3 mt-3">
-                <p className="mb-1"><strong>Selected File:</strong> {file.name}</p>
-                <p className="mb-0"><strong>Size:</strong> {(file.size / (1024 * 1024)).toFixed(2)} MB</p>
+              <div 
+                className={`upload-box ${dragActive ? 'active' : ''}`}
+                onDragEnter={handleDrag}
+                onDragOver={handleDrag}
+                onDragLeave={handleDrag}
+                onDrop={handleDrop}
+                onClick={() => fileInputRef.current.click()}
+              >
+                <i className="bi bi-cloud-arrow-up" style={{ fontSize: '3rem', color: '#4a86e8' }}></i>
+                <h3 className="mt-3">Upload Audio File</h3>
+                <p className="text-muted">
+                  Drag & drop your audio file here, or click to browse
+                </p>
+                <p className="text-muted small">
+                  Supported formats: MP3, WAV, M4A, FLAC, etc. (Max 50MB)
+                </p>
+                <Form.Control
+                  type="file"
+                  ref={fileInputRef}
+                  onChange={handleFileChange}
+                  accept="audio/*"
+                  style={{ display: 'none' }}
+                />
               </div>
+              
+              {file && (
+                <div className="file-info p-3 mt-3">
+                  <p className="mb-1"><strong>Selected File:</strong> {file.name}</p>
+                  <p className="mb-0"><strong>Size:</strong> {(file.size / (1024 * 1024)).toFixed(2)} MB</p>
+                </div>
+              )}
               
               <Card className="mt-3 topic-selection-card">
                 <Card.Body>
@@ -305,7 +306,7 @@ const FileUpload = () => {
                 <Button variant="secondary" className="me-2" onClick={handleReset}>
                   Cancel
                 </Button>
-                <Button variant="primary" onClick={handleUpload}>
+                <Button variant="primary" onClick={handleUpload} disabled={!file}>
                   Process Audio
                 </Button>
               </div>
