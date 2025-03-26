@@ -413,24 +413,63 @@ const FileUpload = () => {
     if (!result) return;
     
     let downloadUrl;
+    let filename;
+    
+    // Log the available URLs for debugging
+    console.log('Available download URLs:', {
+      result,
+      reportUrl: result.reportUrl,
+      docxUrl: result.docxUrl,
+      pdfUrl: result.pdfUrl,
+      format: result.format,
+      requestedFormat: format
+    });
     
     if (format === 'primary') {
       // Use the main report URL
       downloadUrl = result.reportUrl;
+      filename = result.fileName || result.reportName;
     } else if (format === 'docx' && result.docxUrl) {
       // Use the DOCX URL if specifically requested
       downloadUrl = result.docxUrl;
+      filename = result.docxFileName;
     } else if (format === 'pdf' && result.pdfUrl) {
       // Use the PDF URL if specifically requested
       downloadUrl = result.pdfUrl;
+      filename = result.pdfFileName;
     } else {
       // Fallback to the main report URL
       downloadUrl = result.reportUrl;
+      filename = result.fileName || result.reportName;
     }
     
+    // Ensure URL starts with API path if it's a relative URL
+    if (downloadUrl && !downloadUrl.startsWith('http')) {
+      const apiBase = `${window.location.protocol}//${window.location.host}`;
+      // Ensure URL starts with slash
+      if (!downloadUrl.startsWith('/')) {
+        downloadUrl = '/' + downloadUrl;
+      }
+      downloadUrl = apiBase + downloadUrl;
+    }
+    
+    console.log(`Initiating download for ${format} format: ${downloadUrl}`);
+    
     if (downloadUrl) {
-      // Try to trigger download via anchor click
-      window.open(downloadUrl, '_blank');
+      try {
+        // Create a direct download link instead of opening in a new window
+        const link = document.createElement('a');
+        link.href = downloadUrl;
+        link.setAttribute('download', filename || 'meeting_report');
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      } catch (error) {
+        console.error('Download error:', error);
+        setError('Error initiating download. Please try again.');
+      }
+    } else {
+      setError(`No download URL available for ${format} format`);
     }
   };
 
@@ -738,18 +777,20 @@ const FileUpload = () => {
                     variant="primary" 
                     onClick={() => handleDownload('primary')}
                     className="mb-2 d-block"
+                    style={{ minWidth: '220px' }}
                   >
-                    <i className={`bi ${result.format === 'pdf' ? 'bi-file-earmark-pdf' : 'bi-file-earmark-word'} me-2`}></i>
-                    Download Report ({result.format?.toUpperCase() || 'DOCX'})
+                    <i className={`bi ${(result.format === 'pdf') ? 'bi-file-earmark-pdf' : 'bi-file-earmark-word'} me-2`}></i>
+                    Download Report ({(result.format || 'DOCX').toUpperCase()})
                   </Button>
                   
-                  {/* Alternative Format (if available) */}
+                  {/* Alternative Format Download Buttons */}
                   {result.format === 'pdf' && result.docxUrl && (
                     <Button 
                       variant="outline-secondary" 
                       onClick={() => handleDownload('docx')}
                       size="sm"
                       className="d-block mt-2"
+                      style={{ minWidth: '220px' }}
                     >
                       <i className="bi bi-file-earmark-word me-2"></i>
                       Download as DOCX
@@ -762,14 +803,29 @@ const FileUpload = () => {
                       onClick={() => handleDownload('pdf')}
                       size="sm"
                       className="d-block mt-2"
+                      style={{ minWidth: '220px' }}
                     >
                       <i className="bi bi-file-earmark-pdf me-2"></i>
                       Download as PDF
                     </Button>
                   )}
+                  
+                  {/* PDF Error Message */}
+                  {result.pdfError && (
+                    <Alert variant="warning" className="mt-2 text-start" style={{ fontSize: '0.85rem' }}>
+                      <i className="bi bi-exclamation-triangle me-2"></i>
+                      PDF generation encountered an issue. Only DOCX is available.
+                    </Alert>
+                  )}
                 </div>
                 
-                <Button variant="outline-secondary" className="mt-3" onClick={handleReset}>
+                <Button 
+                  variant="outline-secondary" 
+                  className="mt-3" 
+                  onClick={handleReset}
+                  style={{ minWidth: '220px' }}
+                >
+                  <i className="bi bi-arrow-repeat me-2"></i>
                   Process Another File
                 </Button>
               </div>
