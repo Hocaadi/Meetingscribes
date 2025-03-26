@@ -134,15 +134,14 @@ const FileUpload = () => {
       }
       
       // Auto-complete when final status is received
-      if (update.status === 'completed') {
+      if (update.status === 'completed' || update.message === 'Processing completed successfully') {
         setProgress(100);
         setUploading(false);
-        if (update.fileName) {
-          setResult({
-            message: 'Processing completed successfully',
-            fileName: update.fileName
-          });
-        }
+        setResult({
+          message: 'Processing completed successfully',
+          fileName: update.reportName || update.fileName, // Handle both property names
+          reportUrl: update.reportUrl || `/download/${update.reportName || update.fileName}` // Ensure we have a URL
+        });
       }
       
       // Handle errors
@@ -314,19 +313,23 @@ const FileUpload = () => {
   };
 
   const handleDownload = async () => {
-    if (!result || !result.fileName) {
+    if (!result || (!result.fileName && !result.reportUrl)) {
       setError('No file available for download');
       return;
     }
     
     try {
-      const response = await axios.get(`${config.API_URL}/api/download/${result.fileName}`, {
+      // Use the reportUrl directly if available, otherwise construct it
+      const downloadUrl = result.reportUrl || `${config.API_URL}/api/download/${result.fileName}`;
+      
+      const response = await axios.get(downloadUrl, {
         responseType: 'blob'
       });
       
       saveAs(response.data, result.fileName);
     } catch (error) {
-      setError('Error downloading file');
+      setError('Error downloading file: ' + (error.message || 'Unknown error'));
+      console.error('Download error:', error);
     }
   };
 
