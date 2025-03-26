@@ -641,7 +641,6 @@ async function generateReport(transcript, structuredInsights, meetingTopic = '')
     // Add title page
     children.push(
       new Paragraph({
-        text: reportTitle,
         heading: HeadingLevel.TITLE,
         alignment: AlignmentType.CENTER,
         spacing: {
@@ -696,7 +695,6 @@ async function generateReport(transcript, structuredInsights, meetingTopic = '')
     // Add table of contents
     children.push(
       new Paragraph({
-        text: "TABLE OF CONTENTS",
         heading: HeadingLevel.HEADING_1,
         alignment: AlignmentType.CENTER,
         spacing: {
@@ -728,8 +726,11 @@ async function generateReport(transcript, structuredInsights, meetingTopic = '')
     // Add executive summary section
     children.push(
       new Paragraph({
-        text: "Executive Summary",
         heading: HeadingLevel.HEADING_1,
+        spacing: {
+          before: 240,
+          after: 120
+        },
         children: [
           new TextRun({
             text: "Executive Summary",
@@ -975,8 +976,11 @@ async function generateReport(transcript, structuredInsights, meetingTopic = '')
     // Add insights sections - IMPROVED PARSING LOGIC
     children.push(
       new Paragraph({
-        text: "Key Insights",
         heading: HeadingLevel.HEADING_1,
+        spacing: {
+          before: 240,
+          after: 120
+        },
         children: [
           new TextRun({
             text: "Key Insights",
@@ -1052,7 +1056,6 @@ async function generateReport(transcript, structuredInsights, meetingTopic = '')
       // Add section heading
       children.push(
         new Paragraph({
-          text: sectionTitle,
           heading: HeadingLevel.HEADING_2,
           spacing: {
             before: 240,
@@ -1203,7 +1206,6 @@ async function generateReport(transcript, structuredInsights, meetingTopic = '')
           pageBreakBefore: true
         }),
         new Paragraph({
-          text: "Meeting Evaluation by Guider",
           heading: HeadingLevel.HEADING_1,
           spacing: {
             before: 240,
@@ -1520,8 +1522,11 @@ async function generateReport(transcript, structuredInsights, meetingTopic = '')
         pageBreakBefore: true
       }),
       new Paragraph({
-        text: "Complete Meeting Transcript",
         heading: HeadingLevel.HEADING_1,
+        spacing: {
+          before: 240,
+          after: 120
+        },
         children: [
           new TextRun({
             text: "Complete Meeting Transcript",
