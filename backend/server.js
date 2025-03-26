@@ -29,22 +29,143 @@ const io = new Server(server, {
       : ['http://localhost:3000'],
     methods: ['GET', 'POST'],
     credentials: true
-  }
+  },
+  pingTimeout: 60000,
+  pingInterval: 25000,
+  maxHttpBufferSize: 5e6, // 5MB
+  transports: ['websocket', 'polling']
 });
+
+// Track active sessions and their sockets
+const activeSessions = new Map();
+// Message queue for disconnected clients
+const messageQueues = new Map();
 
 // Socket.io connection handling
 io.on('connection', (socket) => {
-  console.log('Client connected:', socket.id);
+  const sessionId = socket.handshake.query.sessionId;
+  console.log(`Client connected: ${socket.id} with session: ${sessionId}`);
   
-  socket.on('disconnect', () => {
-    console.log('Client disconnected:', socket.id);
+  // Store session to socket mapping
+  if (sessionId) {
+    // Add to active sessions
+    if (!activeSessions.has(sessionId)) {
+      activeSessions.set(sessionId, new Set());
+    }
+    activeSessions.get(sessionId).add(socket.id);
+    
+    // Join the room for this session
+    socket.join(sessionId);
+    
+    // If we have queued messages, send them now
+    if (messageQueues.has(sessionId)) {
+      console.log(`Delivering queued messages for reconnected session ${sessionId}`);
+      const queuedMessages = messageQueues.get(sessionId);
+      
+      queuedMessages.forEach(message => {
+        socket.emit('processing_update', message);
+      });
+      
+      // Clear the queue
+      messageQueues.delete(sessionId);
+    }
+  }
+  
+  // Handle ping requests from client
+  socket.on('ping', (data) => {
+    socket.emit('pong', { 
+      serverTime: new Date().toISOString(),
+      clientTime: data.timestamp 
+    });
+  });
+  
+  socket.on('disconnect', (reason) => {
+    console.log(`Client disconnected: ${socket.id} from session: ${sessionId}, reason: ${reason}`);
+    
+    // Clean up session tracking
+    if (sessionId && activeSessions.has(sessionId)) {
+      const socketSet = activeSessions.get(sessionId);
+      socketSet.delete(socket.id);
+      
+      // If no more sockets for this session, don't remove it yet
+      // We'll keep the session ID in case the client reconnects
+      if (socketSet.size === 0) {
+        console.log(`All sockets for session ${sessionId} disconnected`);
+      }
+    }
   });
 });
 
-// Create global emitter function to use throughout the application
+// Enhanced global emitter function with retry logic and queuing
 global.emitProcessingUpdate = (sessionId, status, data = {}) => {
-  io.to(sessionId).emit('processing_update', { status, ...data, timestamp: new Date().toISOString() });
+  if (!sessionId) {
+    console.log('No sessionId provided for emitProcessingUpdate, skipping');
+    return false;
+  }
+  
+  try {
+    // Check if the session room exists and has connections
+    const room = io.sockets.adapter.rooms.get(sessionId);
+    const hasConnections = room && room.size > 0;
+    
+    console.log(`Emitting to session ${sessionId}, has connections: ${hasConnections}`);
+    
+    // Create message with timestamp
+    const message = { 
+      status, 
+      ...data, 
+      timestamp: new Date().toISOString() 
+    };
+    
+    if (hasConnections) {
+      // Emit to the room
+      io.to(sessionId).emit('processing_update', message);
+      return true;
+    } else {
+      // If no active connections for this session, store message for later delivery
+      console.log(`No active connections for session ${sessionId}, storing update for later delivery`);
+      storeMessageForLaterDelivery(sessionId, message);
+      return false;
+    }
+  } catch (error) {
+    console.error(`Error emitting update to session ${sessionId}:`, error);
+    return false;
+  }
 };
+
+// Store messages for later delivery when client reconnects
+function storeMessageForLaterDelivery(sessionId, message) {
+  if (!messageQueues.has(sessionId)) {
+    messageQueues.set(sessionId, []);
+  }
+  messageQueues.get(sessionId).push({
+    ...message,
+    queuedAt: new Date().toISOString()
+  });
+  
+  // Limit queue size
+  const queue = messageQueues.get(sessionId);
+  if (queue.length > 100) {
+    queue.shift(); // Remove oldest messages if queue gets too large
+  }
+}
+
+// Clean up old message queues every 30 minutes
+setInterval(() => {
+  const now = new Date();
+  for (const [sessionId, messages] of messageQueues.entries()) {
+    if (messages.length > 0) {
+      const oldestMessage = messages[0];
+      const queuedAt = new Date(oldestMessage.queuedAt);
+      
+      // If oldest message is more than 2 hours old, clean up the queue
+      if ((now - queuedAt) > (2 * 60 * 60 * 1000)) {
+        console.log(`Cleaning up stale message queue for session ${sessionId}`);
+        messageQueues.delete(sessionId);
+      }
+    }
+  }
+}, 30 * 60 * 1000); // 30 minutes
 
 // Configure CORS for production/development environments
 const allowedOrigins = process.env.NODE_ENV === 'production' 
@@ -137,15 +258,35 @@ app.post('/api/upload', upload.single('audioFile'), async (req, res) => {
     
     // Get session ID for WebSocket updates
     const sessionId = req.body.sessionId;
+    console.log(`Session ID for WebSocket updates: ${sessionId || 'none provided'}`);
     
-    // If we have a session ID, join that client to a room for updates
+    // If we have a session ID, ensure all sockets with this ID are in the right room
     if (sessionId) {
-      const sockets = await io.fetchSockets();
-      sockets.forEach(socket => {
-        if (socket.handshake.query.sessionId === sessionId) {
-          socket.join(sessionId);
-        }
-      });
+      try {
+        // First, check all connected sockets
+        const sockets = await io.fetchSockets();
+        let joinedSocketCount = 0;
+        
+        sockets.forEach(socket => {
+          // Check both socket ID and handshake query
+          if (socket.handshake.query.sessionId === sessionId) {
+            socket.join(sessionId);
+            joinedSocketCount++;
+          }
+        });
+        
+        console.log(`Found ${joinedSocketCount} socket(s) for session ${sessionId} and added them to room`);
+        
+        // Send a notification to all sockets in this session
+        global.emitProcessingUpdate(sessionId, 'started', { 
+          message: 'Starting audio processing',
+          fileSize: req.file.size,
+          fileName: req.file.originalname
+        });
+      } catch (socketError) {
+        console.error('Error managing socket rooms:', socketError);
+        // Continue processing even if socket management fails
+      }
     }
     
     // Process the audio file
@@ -176,8 +317,26 @@ app.post('/api/upload', upload.single('audioFile'), async (req, res) => {
         docxFileName: result.docxFileName,
         pdfFileName: result.pdfFileName,
         pdfSuccess: !!pdfUrl,
-        pdfError
+        pdfError,
+        sessionId
       });
+      
+      // Send final success update via WebSocket
+      if (sessionId) {
+        global.emitProcessingUpdate(sessionId, 'completed', {
+          message: 'Processing completed successfully',
+          reportPath: filePath,
+          fileName: fileName,
+          reportFileName: result.reportFileName,
+          docxFileName: result.docxFileName,
+          docxUrl: docxUrl,
+          pdfFileName: result.pdfFileName,
+          pdfUrl: pdfUrl,
+          pdfError: pdfError,
+          format: isPdf && pdfUrl ? 'pdf' : 'docx',
+          percentComplete: 100
+        });
+      }
       
       return res.status(200).json({ 
         message: 'File processed successfully',
@@ -197,7 +356,10 @@ app.post('/api/upload', upload.single('audioFile'), async (req, res) => {
       console.error('Detailed processing error:', processingError);
       // If we have a session ID, emit error to that client
       if (sessionId) {
-        global.emitProcessingUpdate(sessionId, 'error', { message: processingError.message });
+        global.emitProcessingUpdate(sessionId, 'error', { 
+          message: processingError.message,
+          details: process.env.NODE_ENV === 'development' ? processingError.stack : undefined
+        });
       }
       
       // If there's an error in processing, still return a 500 but with more details
