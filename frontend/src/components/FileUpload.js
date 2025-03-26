@@ -25,6 +25,53 @@ const MEETING_TOPICS = [
   { value: "other", label: "Other" }
 ];
 
+// Evaluation templates
+const EVALUATION_TEMPLATES = [
+  { 
+    value: "", 
+    label: "No evaluation template" 
+  },
+  { 
+    value: "performance_evaluation", 
+    label: "Employee/Leader Meeting Performance Evaluation",
+    template: `Employee/Leader Meeting Performance Evaluation Template
+Meeting Details
+Date: [YYYY-MM-DD]
+Meeting Topic: [Topic of Discussion]
+Participants: [List of attendees]
+Duration: [Meeting Length]
+Evaluation Criteria (100 Points Total - Relative Grading)
+Each participant will be scored out of 10 in the following categories, leading to a weighted total score.
+
+Criteria	Description	Weightage (%)
+Solving Complex Problems	Ability to tackle and resolve critical issues	10%
+Proactiveness	Initiating discussions and taking ownership of tasks	10%
+Discussing Roadblocks	Identifying challenges and suggesting solutions	10%
+Professionalism & Communication	Clear, concise, and respectful discussion	10%
+Task Accomplishments	Contribution towards tasks and complexity-based completion	10%
+Decision-Making & Leadership	Taking charge, guiding discussions, and decisive actions	10%
+Collaboration & Team Engagement	Interaction, supporting peers, and constructive feedback	10%
+Innovation & Creativity	Bringing new ideas and approaches to challenges	10%
+Adherence to Meeting Agenda	Staying on topic and time efficiency	10%
+Actionable Takeaways & Execution	Providing clear next steps and follow-up actions	10%
+Scoring Table (Relative Grading)
+The LLM will analyze each participant's contribution and assign scores relative to their peers, ensuring no one scores 100.
+
+Participant Name	Scores by Category (0-10)	Total Score
+[Name 1]	[Scores for each criterion]	[Calculated]
+[Name 2]	[Scores for each criterion]	[Calculated]
+[Name 3]	[Scores for each criterion]	[Calculated]
+Winner Announcement
+Top Performer: [Name] (Highest Score)
+Key Strengths: [Mention top strengths]
+Areas for Improvement: [Mention scope for growth]`
+  },
+  { 
+    value: "custom", 
+    label: "Custom Evaluation Template" 
+  }
+];
+
 // Status Icons for different processing stages
 const STATUS_ICONS = {
   started: 'arrow-right-circle',
@@ -94,6 +141,9 @@ const FileUpload = () => {
   const [customInstructions, setCustomInstructions] = useState('');
   const [showCustomInstructions, setShowCustomInstructions] = useState(false);
   const [meetingTopic, setMeetingTopic] = useState('');
+  const [evaluationTemplate, setEvaluationTemplate] = useState('');
+  const [customEvaluationTemplate, setCustomEvaluationTemplate] = useState('');
+  const [showEvaluationOptions, setShowEvaluationOptions] = useState(false);
   const fileInputRef = useRef(null);
   const [dragActive, setDragActive] = useState(false);
   
@@ -237,6 +287,33 @@ const FileUpload = () => {
   const handleCustomInstructionsChange = (e) => {
     setCustomInstructions(e.target.value);
   };
+  
+  const handleEvaluationTemplateChange = (e) => {
+    const selectedTemplate = e.target.value;
+    setEvaluationTemplate(selectedTemplate);
+    
+    // If a predefined template is selected, populate with the template content
+    if (selectedTemplate && selectedTemplate !== 'custom') {
+      const template = EVALUATION_TEMPLATES.find(t => t.value === selectedTemplate);
+      if (template && template.template) {
+        setCustomEvaluationTemplate(template.template);
+      }
+    } else if (selectedTemplate === 'custom') {
+      // For custom template, start with an empty textarea or a basic structure
+      setCustomEvaluationTemplate('');
+    } else {
+      // No template selected
+      setCustomEvaluationTemplate('');
+    }
+  };
+  
+  const handleCustomEvaluationTemplateChange = (e) => {
+    setCustomEvaluationTemplate(e.target.value);
+  };
+  
+  const toggleEvaluationOptions = () => {
+    setShowEvaluationOptions(!showEvaluationOptions);
+  };
 
   const handleUpload = async () => {
     if (!file) {
@@ -259,8 +336,20 @@ const FileUpload = () => {
       }
       
       // Add custom instructions if provided
-      if (customInstructions.trim()) {
-        formData.append('customInstructions', customInstructions.trim());
+      let finalInstructions = customInstructions.trim();
+      
+      // If an evaluation template is selected, append it to custom instructions
+      if (evaluationTemplate && customEvaluationTemplate) {
+        // If there are already custom instructions, add the template at the end
+        if (finalInstructions) {
+          finalInstructions += '\n\n=== EVALUATION TEMPLATE ===\n' + customEvaluationTemplate;
+        } else {
+          finalInstructions = customEvaluationTemplate;
+        }
+      }
+      
+      if (finalInstructions) {
+        formData.append('customInstructions', finalInstructions);
       }
       
       // Add session ID for WebSocket updates
@@ -342,6 +431,9 @@ const FileUpload = () => {
     setCustomInstructions('');
     setShowCustomInstructions(false);
     setMeetingTopic('');
+    setEvaluationTemplate('');
+    setCustomEvaluationTemplate('');
+    setShowEvaluationOptions(false);
     
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
@@ -448,6 +540,65 @@ const FileUpload = () => {
                       <Form.Text className="text-muted">
                         Your instructions will be used to enhance the AI analysis of your meeting transcript.
                       </Form.Text>
+                    </Form.Group>
+                  </Card.Body>
+                )}
+              </Card>
+              
+              <Card className="mt-3 evaluation-options-card">
+                <Card.Header 
+                  className="d-flex justify-content-between align-items-center evaluation-options-header"
+                  style={{ cursor: 'pointer', backgroundColor: '#f8f9fa', borderBottom: showEvaluationOptions ? '1px solid #dee2e6' : 'none' }}
+                  onClick={toggleEvaluationOptions}
+                >
+                  <div>
+                    <i className="bi bi-award me-2" style={{ color: '#ffc107' }}></i>
+                    <span>Meeting Evaluation by Guider</span>
+                  </div>
+                  <i className={`bi ${showEvaluationOptions ? 'bi-chevron-up' : 'bi-chevron-down'}`}></i>
+                </Card.Header>
+                
+                {showEvaluationOptions && (
+                  <Card.Body>
+                    <Form.Group>
+                      <Form.Label>
+                        <strong>Select an evaluation template:</strong>
+                      </Form.Label>
+                      <Form.Select 
+                        value={evaluationTemplate}
+                        onChange={handleEvaluationTemplateChange}
+                        className="evaluation-template-select mb-3"
+                      >
+                        {EVALUATION_TEMPLATES.map(template => (
+                          <option key={template.value} value={template.value}>
+                            {template.label}
+                          </option>
+                        ))}
+                      </Form.Select>
+                      <Form.Text className="text-muted mb-3 d-block">
+                        The Guider agent will evaluate meeting participants based on the selected template.
+                      </Form.Text>
+                      
+                      {(evaluationTemplate === 'custom' || evaluationTemplate === 'performance_evaluation') && (
+                        <div className="mt-3">
+                          <Form.Label>
+                            <strong>{evaluationTemplate === 'custom' ? 'Custom Evaluation Template:' : 'Performance Evaluation Template:'}</strong>
+                          </Form.Label>
+                          <Form.Control
+                            as="textarea"
+                            rows={10}
+                            placeholder="Enter your custom evaluation template here..."
+                            value={customEvaluationTemplate}
+                            onChange={handleCustomEvaluationTemplateChange}
+                            className="font-monospace small"
+                          />
+                          <Form.Text className="text-muted mt-2">
+                            {evaluationTemplate === 'custom' 
+                              ? 'Create your own evaluation criteria and format for the Guider agent to follow.' 
+                              : 'You can customize the default template to fit your specific meeting requirements.'}
+                          </Form.Text>
+                        </div>
+                      )}
                     </Form.Group>
                   </Card.Body>
                 )}
