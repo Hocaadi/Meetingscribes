@@ -150,7 +150,9 @@ app.post('/api/upload', upload.single('audioFile'), async (req, res) => {
       return res.status(200).json({ 
         message: 'File processed successfully',
         reportPath: result.reportPath,
-        fileName: result.fileName
+        fileName: result.fileName,
+        reportName: result.fileName,
+        reportUrl: `/api/download/${result.fileName}`
       });
     } catch (processingError) {
       console.error('Detailed processing error:', processingError);
@@ -173,13 +175,16 @@ app.post('/api/upload', upload.single('audioFile'), async (req, res) => {
 });
 
 // Route to download the processed document
-app.get('/api/download/:fileName', (req, res) => {
+app.get(['/api/download/:fileName', '/download/:fileName'], (req, res) => {
   const fileName = req.params.fileName;
   const filePath = path.join(__dirname, 'uploads', fileName);
+  
+  console.log(`Download requested for file: ${fileName} (Path: ${filePath})`);
   
   if (fs.existsSync(filePath)) {
     res.download(filePath);
   } else {
+    console.error(`File not found: ${filePath}`);
     res.status(404).json({ error: 'File not found' });
   }
 });

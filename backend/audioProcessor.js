@@ -124,8 +124,10 @@ async function processAudio(filePath, userCustomInstructions = null, meetingTopi
     if (sessionId) {
       global.emitProcessingUpdate(sessionId, 'completed', {
         message: 'Processing completed successfully',
-        reportUrl: `/download/${reportFileName}`,
-        reportName: reportFileName
+        reportUrl: `/api/download/${reportFileName}`,
+        reportName: reportFileName,
+        status: "completed",
+        timestamp: new Date().toISOString()
       });
     }
 
@@ -137,6 +139,7 @@ async function processAudio(filePath, userCustomInstructions = null, meetingTopi
     return {
       reportPath: reportPath,
       fileName: reportFileName,
+      reportUrl: `/api/download/${reportFileName}`,
       transcript: transcript,
       structuredInsights: structuredInsights
     };
