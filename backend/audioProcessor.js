@@ -22,7 +22,9 @@ if (!OPENAI_API_KEY) {
   process.exit(1); // Exit if API key is missing
 }
 
-const MODEL_OPENAI = process.env.OPENAI_MODEL || 'gpt-4o-mini';
+// Define models being used
+const TRANSCRIPTION_MODEL = "whisper-1";
+const LLM_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
 const TEMPERATURE = parseFloat(process.env.OPENAI_TEMPERATURE || '0.1');
 
 // Initialize OpenAI client
@@ -35,11 +37,22 @@ const openai = new OpenAI({
  * @param {string} audioFilePath - Path to the uploaded audio file
  * @param {string} userCustomInstructions - Optional custom instructions from the user
  * @param {string} meetingTopic - Optional meeting topic/domain context
+ * @param {string} sessionId - Optional session ID for WebSocket updates
  * @returns {Promise<Object>} - Object containing report file path and name
  */
-async function processAudio(audioFilePath, userCustomInstructions = '', meetingTopic = '') {
+async function processAudio(audioFilePath, userCustomInstructions = '', meetingTopic = '', sessionId = null) {
   try {
     console.log('Processing audio file:', audioFilePath);
+    
+    // Send initial status update
+    if (sessionId) {
+      global.emitProcessingUpdate(sessionId, 'started', {
+        message: 'Processing started',
+        file: path.basename(audioFilePath),
+        transcriptionModel: TRANSCRIPTION_MODEL,
+        analysisModel: LLM_MODEL
+      });
+    }
     
     // Log context information for better debugging
     if (userCustomInstructions) {
@@ -51,20 +64,47 @@ async function processAudio(audioFilePath, userCustomInstructions = '', meetingT
     }
 
     // Step 1: Convert audio to required format (16kHz, mono, wav) if needed
+    if (sessionId) {
+      global.emitProcessingUpdate(sessionId, 'converting', {
+        message: 'Converting audio to required format...'
+      });
+    }
+    
     const convertedFilePath = await convertAudioFormat(audioFilePath);
     console.log('Audio converted successfully');
 
     // Step 2: Transcribe the audio using OpenAI Whisper API
+    if (sessionId) {
+      global.emitProcessingUpdate(sessionId, 'transcribing', {
+        message: 'Transcribing audio using OpenAI Whisper model...',
+        model: TRANSCRIPTION_MODEL
+      });
+    }
+    
     console.log('Transcribing audio...');
-    const transcript = await transcribeAudio(convertedFilePath);
+    const transcript = await transcribeAudio(convertedFilePath, sessionId);
     console.log('Audio transcribed successfully');
 
     // Step 3: Extract structured insights using OpenAI API
+    if (sessionId) {
+      global.emitProcessingUpdate(sessionId, 'analyzing', {
+        message: 'Analyzing transcript with AI...',
+        model: LLM_MODEL,
+        transcriptLength: transcript.length
+      });
+    }
+    
     console.log('Extracting structured insights...');
-    const structuredInsights = await extractStructuredInsights(transcript, userCustomInstructions, meetingTopic);
+    const structuredInsights = await extractStructuredInsights(transcript, userCustomInstructions, meetingTopic, sessionId);
     console.log('Insights extracted successfully');
 
     // Step 4: Generate document with results
+    if (sessionId) {
+      global.emitProcessingUpdate(sessionId, 'generating_document', {
+        message: 'Generating final report document...'
+      });
+    }
+    
     console.log('Generating report document...');
     const reportFileName = `meeting_analysis_report_${Date.now()}.docx`;
     const reportPath = path.join(__dirname, 'uploads', reportFileName);
@@ -76,12 +116,28 @@ async function processAudio(audioFilePath, userCustomInstructions = '', meetingT
       fs.unlinkSync(convertedFilePath);
     }
 
+    // Send completion update
+    if (sessionId) {
+      global.emitProcessingUpdate(sessionId, 'completed', {
+        message: 'Processing completed successfully',
+        fileName: reportFileName
+      });
+    }
+
     return {
       reportPath: reportPath,
       fileName: reportFileName
     };
   } catch (error) {
     console.error('Error in audio processing:', error);
+    
+    // Send error update
+    if (sessionId) {
+      global.emitProcessingUpdate(sessionId, 'error', {
+        message: `Error: ${error.message}`
+      });
+    }
+    
     throw error;
   }
 }
@@ -111,9 +167,10 @@ async function convertAudioFormat(inputFilePath) {
 /**
  * Transcribe audio using OpenAI Whisper API with the SDK
  * @param {string} audioFilePath - Path to the audio file
+ * @param {string} sessionId - Optional session ID for WebSocket updates
  * @returns {Promise<string>} - Transcribed text
  */
-async function transcribeAudio(audioFilePath) {
+async function transcribeAudio(audioFilePath, sessionId = null) {
   try {
     // Verify the file exists and is readable
     if (!fs.existsSync(audioFilePath)) {
@@ -127,6 +184,14 @@ async function transcribeAudio(audioFilePath) {
     
     console.log(`Attempting to transcribe file: ${audioFilePath} (${fileStats.size} bytes)`);
     
+    if (sessionId) {
+      global.emitProcessingUpdate(sessionId, 'transcription_started', {
+        message: 'Starting audio transcription...',
+        fileSize: fileStats.size,
+        model: TRANSCRIPTION_MODEL
+      });
+    }
+    
     // Call OpenAI API with retry logic
     let attempts = 0;
     const maxAttempts = 3;
@@ -138,18 +203,41 @@ async function transcribeAudio(audioFilePath) {
         // Create a fresh file stream for each attempt
         const fileStream = fs.createReadStream(audioFilePath);
         
+        if (sessionId && attempts > 1) {
+          global.emitProcessingUpdate(sessionId, 'transcription_retry', {
+            message: `Retrying transcription (attempt ${attempts} of ${maxAttempts})...`,
+            attempt: attempts,
+            maxAttempts: maxAttempts
+          });
+        }
+        
         const transcription = await openai.audio.transcriptions.create({
           file: fileStream,
-          model: "whisper-1",
+          model: TRANSCRIPTION_MODEL,
         });
         
         if (!transcription || !transcription.text) {
           throw new Error("Received empty response from OpenAI API");
         }
         
+        if (sessionId) {
+          global.emitProcessingUpdate(sessionId, 'transcription_completed', {
+            message: 'Transcription completed successfully',
+            transcriptLength: transcription.text.length
+          });
+        }
+        
         return transcription.text;
       } catch (apiError) {
         console.error(`API attempt ${attempts} failed:`, apiError.message);
+        
+        if (sessionId) {
+          global.emitProcessingUpdate(sessionId, 'transcription_error', {
+            message: `Transcription attempt ${attempts} failed: ${apiError.message}`,
+            attempt: attempts,
+            maxAttempts: maxAttempts
+          });
+        }
         
         if (attempts >= maxAttempts) {
           throw new Error(`Failed to transcribe after ${maxAttempts} attempts: ${apiError.message}`);
@@ -170,14 +258,24 @@ async function transcribeAudio(audioFilePath) {
  * @param {string} transcript - Transcript text
  * @param {string} userCustomInstructions - Optional custom instructions from the user
  * @param {string} meetingTopic - Optional meeting topic/domain context
+ * @param {string} sessionId - Optional session ID for WebSocket updates
  * @returns {Promise<string>} - Structured insights text
  */
-async function extractStructuredInsights(transcript, userCustomInstructions = '', meetingTopic = '') {
+async function extractStructuredInsights(transcript, userCustomInstructions = '', meetingTopic = '', sessionId = null) {
   if (!transcript || transcript.trim() === '') {
     throw new Error('Cannot analyze empty transcript');
   }
   
   try {
+    if (sessionId) {
+      global.emitProcessingUpdate(sessionId, 'analysis_started', {
+        message: 'Starting transcript analysis...',
+        model: LLM_MODEL,
+        hasTopic: !!meetingTopic,
+        hasCustomInstructions: !!userCustomInstructions
+      });
+    }
+    
     const systemInstructions = `
     You are a Business document AI assistant and an expert that analyzes meeting transcripts to extract structured insights.
     From the following transcript, identify:
@@ -213,8 +311,23 @@ async function extractStructuredInsights(transcript, userCustomInstructions = ''
     while (attempts < maxAttempts) {
       try {
         attempts++;
+        
+        if (sessionId && attempts > 1) {
+          global.emitProcessingUpdate(sessionId, 'analysis_retry', {
+            message: `Retrying analysis with ${LLM_MODEL} (attempt ${attempts} of ${maxAttempts})...`,
+            attempt: attempts,
+            maxAttempts: maxAttempts
+          });
+        }
+        
+        if (sessionId) {
+          global.emitProcessingUpdate(sessionId, 'analysis_in_progress', {
+            message: `Sending transcript to ${LLM_MODEL} for analysis...`
+          });
+        }
+        
         const completion = await openai.chat.completions.create({
-          model: MODEL_OPENAI,
+          model: LLM_MODEL,
           temperature: TEMPERATURE,
           store: true,
           messages: [
@@ -227,9 +340,24 @@ async function extractStructuredInsights(transcript, userCustomInstructions = ''
           throw new Error("Received invalid response from OpenAI API");
         }
         
+        if (sessionId) {
+          global.emitProcessingUpdate(sessionId, 'analysis_completed', {
+            message: 'Analysis completed successfully',
+            model: LLM_MODEL
+          });
+        }
+        
         return completion.choices[0].message.content;
       } catch (apiError) {
         console.error(`API attempt ${attempts} failed:`, apiError.message);
+        
+        if (sessionId) {
+          global.emitProcessingUpdate(sessionId, 'analysis_error', {
+            message: `Analysis attempt ${attempts} failed: ${apiError.message}`,
+            attempt: attempts,
+            maxAttempts: maxAttempts
+          });
+        }
         
         if (attempts >= maxAttempts) {
           throw new Error(`Failed to extract insights after ${maxAttempts} attempts: ${apiError.message}`);
@@ -270,6 +398,14 @@ async function generateReport(transcript, structuredInsights, outputPath, meetin
       }),
       new Paragraph({
         text: `Generated on: ${new Date().toLocaleString()}`,
+        style: "normal"
+      }),
+      new Paragraph({
+        text: `Transcription model: ${TRANSCRIPTION_MODEL}`,
+        style: "normal"
+      }),
+      new Paragraph({
+        text: `Analysis model: ${LLM_MODEL}`,
         style: "normal"
       }),
       new Paragraph({
@@ -327,5 +463,7 @@ async function generateReport(transcript, structuredInsights, outputPath, meetin
 }
 
 module.exports = {
-  processAudio
+  processAudio,
+  TRANSCRIPTION_MODEL,
+  LLM_MODEL
 }; 

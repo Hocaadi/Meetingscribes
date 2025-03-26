@@ -1,9 +1,11 @@
-import React, { useState, useRef } from 'react';
-import { Container, Row, Col, Form, Button, ProgressBar, Alert, Card } from 'react-bootstrap';
+import React, { useState, useRef, useEffect } from 'react';
+import { Container, Row, Col, Form, Button, ProgressBar, Alert, Card, ListGroup } from 'react-bootstrap';
 import axios from 'axios';
 import { saveAs } from 'file-saver';
 import config from '../config';
 import 'bootstrap-icons/font/bootstrap-icons.css';
+import { io } from 'socket.io-client';
+import { v4 as uuidv4 } from 'uuid';
 
 // Meeting topics options
 const MEETING_TOPICS = [
@@ -23,6 +25,46 @@ const MEETING_TOPICS = [
   { value: "other", label: "Other" }
 ];
 
+// Status Icons for different processing stages
+const STATUS_ICONS = {
+  started: 'arrow-right-circle',
+  converting: 'arrow-repeat',
+  transcribing: 'mic',
+  transcription_started: 'soundwave',
+  transcription_retry: 'arrow-clockwise',
+  transcription_completed: 'check-circle',
+  transcription_error: 'exclamation-triangle',
+  analyzing: 'brain',
+  analysis_started: 'lightbulb',
+  analysis_retry: 'arrow-clockwise',
+  analysis_in_progress: 'hourglass-split',
+  analysis_completed: 'check-circle',
+  analysis_error: 'exclamation-triangle',
+  generating_document: 'file-earmark-word',
+  completed: 'check-circle-fill',
+  error: 'x-circle-fill'
+};
+
+// Status Colors for different processing stages
+const STATUS_COLORS = {
+  started: 'primary',
+  converting: 'primary',
+  transcribing: 'info',
+  transcription_started: 'info',
+  transcription_retry: 'warning',
+  transcription_completed: 'success',
+  transcription_error: 'danger',
+  analyzing: 'primary',
+  analysis_started: 'info',
+  analysis_retry: 'warning',
+  analysis_in_progress: 'info',
+  analysis_completed: 'success',
+  analysis_error: 'danger',
+  generating_document: 'primary',
+  completed: 'success',
+  error: 'danger'
+};
+
 const FileUpload = () => {
   const [file, setFile] = useState(null);
   const [uploading, setUploading] = useState(false);
@@ -34,6 +76,83 @@ const FileUpload = () => {
   const [meetingTopic, setMeetingTopic] = useState('');
   const fileInputRef = useRef(null);
   const [dragActive, setDragActive] = useState(false);
+  
+  // WebSocket related state
+  const [socket, setSocket] = useState(null);
+  const [sessionId, setSessionId] = useState('');
+  const [processingUpdates, setProcessingUpdates] = useState([]);
+  const [transcriptionModel, setTranscriptionModel] = useState('');
+  const [analysisModel, setAnalysisModel] = useState('');
+  
+  // Initialize WebSocket connection and session ID
+  useEffect(() => {
+    // Generate a unique session ID for this client
+    const newSessionId = uuidv4();
+    setSessionId(newSessionId);
+    
+    // Connect to WebSocket server
+    const socketUrl = config.API_URL || 'http://localhost:5000';
+    const newSocket = io(socketUrl, {
+      query: { sessionId: newSessionId }
+    });
+    
+    // Set up event listeners
+    newSocket.on('connect', () => {
+      console.log('Connected to WebSocket server');
+    });
+    
+    newSocket.on('processing_update', (update) => {
+      console.log('Processing update:', update);
+      
+      // Extract model info if available
+      if (update.transcriptionModel) {
+        setTranscriptionModel(update.transcriptionModel);
+      }
+      
+      if (update.analysisModel) {
+        setAnalysisModel(update.analysisModel);
+      }
+      
+      // Auto-complete when final status is received
+      if (update.status === 'completed') {
+        setProgress(100);
+        setUploading(false);
+        if (update.fileName) {
+          setResult({
+            message: 'Processing completed successfully',
+            fileName: update.fileName
+          });
+        }
+      }
+      
+      // Handle errors
+      if (update.status === 'error') {
+        setError(update.message || 'An error occurred during processing');
+        setUploading(false);
+        setProgress(0);
+      }
+      
+      // Add the update to our list of updates
+      setProcessingUpdates(prev => [...prev, {
+        ...update,
+        id: Date.now()
+      }]);
+    });
+    
+    newSocket.on('disconnect', () => {
+      console.log('Disconnected from WebSocket server');
+    });
+    
+    // Save socket instance
+    setSocket(newSocket);
+    
+    // Clean up on component unmount
+    return () => {
+      if (newSocket) {
+        newSocket.disconnect();
+      }
+    };
+  }, []);
 
   const handleFileChange = (e) => {
     if (e.target.files && e.target.files[0]) {
@@ -110,6 +229,7 @@ const FileUpload = () => {
       setError(null);
       setUploading(true);
       setProgress(0);
+      setProcessingUpdates([]); // Clear previous updates
       
       const formData = new FormData();
       formData.append('audioFile', file);
@@ -124,6 +244,11 @@ const FileUpload = () => {
         formData.append('customInstructions', customInstructions.trim());
       }
       
+      // Add session ID for WebSocket updates
+      if (sessionId) {
+        formData.append('sessionId', sessionId);
+      }
+      
       const response = await axios.post(config.UPLOAD_ENDPOINT, formData, {
         headers: {
           'Content-Type': 'multipart/form-data'
@@ -135,28 +260,31 @@ const FileUpload = () => {
         }
       });
       
-      // Simulate processing time (server is actually processing the file)
-      let currentProgress = 50;
-      const processingInterval = setInterval(() => {
-        currentProgress += 1;
-        setProgress(currentProgress);
+      // If we're not receiving WebSocket updates, handle the response as before
+      if (!socket || !socket.connected) {
+        // Simulate processing time (server is actually processing the file)
+        let currentProgress = 50;
+        const processingInterval = setInterval(() => {
+          currentProgress += 1;
+          setProgress(currentProgress);
+          
+          if (currentProgress >= 100) {
+            clearInterval(processingInterval);
+          }
+        }, 500);
         
-        if (currentProgress >= 100) {
+        setResult({
+          message: response.data.message,
+          fileName: response.data.fileName
+        });
+        
+        // Clean up interval
+        setTimeout(() => {
           clearInterval(processingInterval);
-        }
-      }, 500);
-      
-      setResult({
-        message: response.data.message,
-        fileName: response.data.fileName
-      });
-      
-      // Clean up interval
-      setTimeout(() => {
-        clearInterval(processingInterval);
-        setProgress(100);
-        setUploading(false);
-      }, 20000); // 20 seconds max for processing simulation
+          setProgress(100);
+          setUploading(false);
+        }, 20000); // 20 seconds max for processing simulation
+      }
       
     } catch (error) {
       setError(error.response?.data?.error || 'Error processing file');
@@ -315,18 +443,58 @@ const FileUpload = () => {
           
           {uploading && (
             <div className="progress-container">
-              <p className="processing-message">
-                {progress < 50 
-                  ? 'Uploading your audio file...' 
-                  : 'Processing your audio file...'}
-              </p>
-              <ProgressBar 
-                animated
-                now={progress} 
-                label={`${progress}%`}
-                variant={progress < 50 ? 'info' : 'primary'}
-              />
-              <p className="text-muted small text-center mt-2">
+              <div className="mb-4">
+                <h4 className="processing-message text-center">
+                  {progress < 50 
+                    ? 'Uploading your audio file...' 
+                    : 'Processing your audio file...'}
+                </h4>
+                
+                {(transcriptionModel || analysisModel) && (
+                  <div className="models-info text-center mb-3">
+                    {transcriptionModel && (
+                      <p className="mb-1"><strong>Transcription Model:</strong> {transcriptionModel}</p>
+                    )}
+                    {analysisModel && (
+                      <p className="mb-1"><strong>Analysis Model:</strong> {analysisModel}</p>
+                    )}
+                  </div>
+                )}
+                
+                <ProgressBar 
+                  animated
+                  now={progress} 
+                  label={`${progress}%`}
+                  variant={progress < 50 ? 'info' : 'primary'}
+                  className="mb-4"
+                />
+              </div>
+              
+              {processingUpdates.length > 0 && (
+                <Card className="processing-updates-card mb-3">
+                  <Card.Header>
+                    <i className="bi bi-activity me-2" style={{ color: '#4a86e8' }}></i>
+                    Processing Status Updates
+                  </Card.Header>
+                  <ListGroup variant="flush" className="processing-updates-list" style={{ maxHeight: '250px', overflowY: 'auto' }}>
+                    {processingUpdates.map(update => (
+                      <ListGroup.Item key={update.id} className="d-flex align-items-center">
+                        <div className={`update-icon text-${STATUS_COLORS[update.status] || 'secondary'} me-3`}>
+                          <i className={`bi bi-${STATUS_ICONS[update.status] || 'arrow-right'}`} style={{ fontSize: '1.25rem' }}></i>
+                        </div>
+                        <div className="update-content flex-grow-1">
+                          <p className="mb-0 fw-medium">{update.message}</p>
+                          <p className="text-muted small mb-0">
+                            {new Date(update.timestamp).toLocaleTimeString()}
+                          </p>
+                        </div>
+                      </ListGroup.Item>
+                    ))}
+                  </ListGroup>
+                </Card>
+              )}
+              
+              <p className="text-muted small text-center">
                 This may take a few minutes depending on the audio length
               </p>
             </div>
@@ -338,6 +506,17 @@ const FileUpload = () => {
                 <i className="bi bi-check-circle-fill" style={{ fontSize: '3rem', color: '#28a745' }}></i>
                 <h3 className="mt-3">Processing Complete!</h3>
                 <p>Your audio has been successfully transcribed and analyzed.</p>
+                
+                {(transcriptionModel || analysisModel) && (
+                  <div className="models-info text-center mb-3">
+                    {transcriptionModel && (
+                      <p className="mb-1"><strong>Transcription Model:</strong> {transcriptionModel}</p>
+                    )}
+                    {analysisModel && (
+                      <p className="mb-1"><strong>Analysis Model:</strong> {analysisModel}</p>
+                    )}
+                  </div>
+                )}
               </div>
               
               <div className="d-flex justify-content-center mt-4">

@@ -5,12 +5,46 @@ const path = require('path');
 const fs = require('fs');
 const { processAudio } = require('./audioProcessor');
 const dotenv = require('dotenv');
+const http = require('http');
+const { Server } = require('socket.io');
 
 // Load environment variables
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+
+// Create HTTP server
+const server = http.createServer(app);
+
+// Configure Socket.io
+const io = new Server(server, {
+  cors: {
+    origin: process.env.NODE_ENV === 'production' 
+      ? [
+          process.env.FRONTEND_URL || 'https://meetingscribe.vercel.app',
+          'https://meetingscribe--zeta.vercel.app',
+          'https://meetingscribe-zeta.vercel.app'
+        ]
+      : ['http://localhost:3000'],
+    methods: ['GET', 'POST'],
+    credentials: true
+  }
+});
+
+// Socket.io connection handling
+io.on('connection', (socket) => {
+  console.log('Client connected:', socket.id);
+  
+  socket.on('disconnect', () => {
+    console.log('Client disconnected:', socket.id);
+  });
+});
+
+// Create global emitter function to use throughout the application
+global.emitProcessingUpdate = (sessionId, status, data = {}) => {
+  io.to(sessionId).emit('processing_update', { status, ...data, timestamp: new Date().toISOString() });
+};
 
 // Configure CORS for production/development environments
 const allowedOrigins = process.env.NODE_ENV === 'production' 
@@ -97,9 +131,22 @@ app.post('/api/upload', upload.single('audioFile'), async (req, res) => {
       console.log(`Meeting topic selected: ${meetingTopic}`);
     }
     
+    // Get session ID for WebSocket updates
+    const sessionId = req.body.sessionId;
+    
+    // If we have a session ID, join that client to a room for updates
+    if (sessionId) {
+      const sockets = await io.fetchSockets();
+      sockets.forEach(socket => {
+        if (socket.handshake.query.sessionId === sessionId) {
+          socket.join(sessionId);
+        }
+      });
+    }
+    
     // Process the audio file
     try {
-      const result = await processAudio(req.file.path, userCustomInstructions, meetingTopic);
+      const result = await processAudio(req.file.path, userCustomInstructions, meetingTopic, sessionId);
       return res.status(200).json({ 
         message: 'File processed successfully',
         reportPath: result.reportPath,
@@ -107,6 +154,11 @@ app.post('/api/upload', upload.single('audioFile'), async (req, res) => {
       });
     } catch (processingError) {
       console.error('Detailed processing error:', processingError);
+      // If we have a session ID, emit error to that client
+      if (sessionId) {
+        global.emitProcessingUpdate(sessionId, 'error', { message: processingError.message });
+      }
+      
       // If there's an error in processing, still return a 500 but with more details
       return res.status(500).json({ 
         error: 'Error processing file', 
@@ -149,7 +201,7 @@ if (process.env.NODE_ENV === 'production') {
   });
 }
 
-// Start the server
-app.listen(PORT, () => {
+// Start the server with socket.io
+server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 }); 
