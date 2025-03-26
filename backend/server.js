@@ -157,18 +157,41 @@ app.post('/api/upload', upload.single('audioFile'), async (req, res) => {
       const fileName = isPdf ? result.pdfFileName : result.reportFileName;
       const filePath = isPdf ? result.pdfPath : result.reportPath;
       
+      // Make sure both PDF and DOCX are available in the response
+      const docxUrl = `/api/download/${result.docxFileName}`;
+      
+      // For PDF, only include URL if PDF was actually created
+      let pdfUrl = null;
+      if (result.pdfPath && result.pdfFileName) {
+        pdfUrl = `/api/download/${result.pdfFileName}`;
+      }
+      
+      // Include error message if PDF generation failed
+      const pdfError = result.pdfError || null;
+      
+      // Improve logging for debugging
+      console.log('Processing complete, returning result:', {
+        format,
+        fileName,
+        docxFileName: result.docxFileName,
+        pdfFileName: result.pdfFileName,
+        pdfSuccess: !!pdfUrl,
+        pdfError
+      });
+      
       return res.status(200).json({ 
         message: 'File processed successfully',
         reportPath: filePath,
         fileName: fileName,
         reportName: fileName,
         reportUrl: `/api/download/${fileName}`,
-        format: format,
+        format: isPdf && pdfUrl ? 'pdf' : 'docx',
         // Include both formats if available for client-side options
         docxFileName: result.docxFileName,
-        docxUrl: `/api/download/${result.docxFileName}`,
+        docxUrl: docxUrl,
         pdfFileName: result.pdfFileName,
-        pdfUrl: isPdf ? `/api/download/${result.pdfFileName}` : null
+        pdfUrl: pdfUrl,
+        pdfError: pdfError
       });
     } catch (processingError) {
       console.error('Detailed processing error:', processingError);
@@ -195,13 +218,54 @@ app.get(['/api/download/:fileName', '/download/:fileName'], (req, res) => {
   const fileName = req.params.fileName;
   const filePath = path.join(__dirname, 'uploads', fileName);
   
-  console.log(`Download requested for file: ${fileName} (Path: ${filePath})`);
+  console.log(`Download requested for file: ${fileName}`);
+  console.log(`Looking for file at path: ${filePath}`);
   
+  // List available files in uploads directory to debug
+  try {
+    const uploadDir = path.join(__dirname, 'uploads');
+    if (fs.existsSync(uploadDir)) {
+      console.log('Available files in uploads directory:');
+      const files = fs.readdirSync(uploadDir);
+      files.forEach(file => {
+        console.log(`- ${file} (${fs.statSync(path.join(uploadDir, file)).size} bytes)`);
+      });
+    } else {
+      console.log('Uploads directory does not exist!');
+    }
+  } catch (dirError) {
+    console.error('Error reading uploads directory:', dirError);
+  }
+  
+  // Check if the file exists
   if (fs.existsSync(filePath)) {
-    res.download(filePath);
+    console.log(`File found, sending: ${filePath}`);
+    
+    // Get file extension and set appropriate Content-Type
+    const ext = path.extname(fileName).toLowerCase();
+    if (ext === '.pdf') {
+      res.setHeader('Content-Type', 'application/pdf');
+    } else if (ext === '.docx') {
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    }
+    
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    
+    // Stream the file instead of using res.download for larger files
+    const fileStream = fs.createReadStream(filePath);
+    fileStream.on('error', (error) => {
+      console.error(`Error streaming file: ${error.message}`);
+      res.status(500).json({ error: 'Error streaming file', details: error.message });
+    });
+    
+    fileStream.pipe(res);
   } else {
     console.error(`File not found: ${filePath}`);
-    res.status(404).json({ error: 'File not found' });
+    res.status(404).json({ 
+      error: 'File not found',
+      requestedFile: fileName,
+      path: filePath
+    });
   }
 });
 

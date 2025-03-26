@@ -127,9 +127,18 @@ async function processAudio(filePath, userCustomInstructions = null, meetingTopi
         message: 'Processing completed successfully',
         reportPath,
         reportFileName,
-        format,
         docxFileName,
-        pdfFileName
+        docxUrl: `/api/download/${docxFileName}`,
+        format,
+        // Include PDF info if available
+        pdfPath,
+        pdfFileName,
+        pdfUrl: pdfFileName ? `/api/download/${pdfFileName}` : null,
+        // Include primary file info based on format
+        primaryFileName: format === 'pdf' && pdfFileName ? pdfFileName : reportFileName,
+        primaryUrl: format === 'pdf' && pdfFileName 
+          ? `/api/download/${pdfFileName}` 
+          : `/api/download/${reportFileName}`
       });
     }
 
@@ -138,15 +147,67 @@ async function processAudio(filePath, userCustomInstructions = null, meetingTopi
       fs.unlinkSync(enhancedFilePath);
     }
 
-    return {
-      reportPath,
+    // Only generate PDF if requested
+    if (format === 'pdf') {
+      try {
+        // Import docx-pdf converter
+        const docxToPdf = require('docx-pdf');
+        
+        // Convert DOCX to PDF
+        console.log('Converting DOCX to PDF...');
+        console.log(`Source DOCX: ${reportPath}`);
+        console.log(`Target PDF: ${pdfPath}`);
+        
+        await new Promise((resolve, reject) => {
+          docxToPdf(reportPath, pdfPath, (err, result) => {
+            if (err) {
+              console.error('Error converting to PDF:', err);
+              reject(err);
+            } else {
+              console.log('PDF conversion successful');
+              // Verify the PDF file exists
+              if (fs.existsSync(pdfPath)) {
+                console.log(`PDF file created successfully: ${pdfPath}`);
+                console.log(`PDF file size: ${fs.statSync(pdfPath).size} bytes`);
+              } else {
+                console.error(`PDF file was not created at expected path: ${pdfPath}`);
+                reject(new Error('PDF file was not created'));
+              }
+              resolve(result);
+            }
+          });
+        });
+        
+        // Return both file paths but indicate PDF as primary
+        return { 
+          reportPath: pdfPath, 
+          reportFileName: pdfFileName,
+          docxPath: reportPath,
+          docxFileName: reportFileName,
+          pdfPath: pdfPath,
+          pdfFileName: pdfFileName
+        };
+      } catch (pdfError) {
+        console.error('Failed to generate PDF, falling back to DOCX:', pdfError);
+        // Fall back to DOCX if PDF generation fails
+        return { 
+          reportPath, 
+          reportFileName,
+          docxPath: reportPath,
+          docxFileName: reportFileName,
+          pdfError: pdfError.message
+        };
+      }
+    }
+
+    // Return just DOCX paths if PDF not requested
+    return { 
+      reportPath, 
       reportFileName,
-      fileName: reportFileName,
-      docxPath,
-      docxFileName,
-      pdfPath,
-      pdfFileName,
-      format
+      docxPath: reportPath,
+      docxFileName: reportFileName,
+      pdfPath: null,
+      pdfFileName: null
     };
   } catch (error) {
     console.error('Error in audio processing:', error);
@@ -1725,30 +1786,55 @@ async function generateReport(transcript, structuredInsights, meetingTopic = '',
 
     // Only generate PDF if requested
     if (format === 'pdf') {
-      // Import docx-pdf converter
-      const docxToPdf = require('docx-pdf');
-      
-      // Convert DOCX to PDF
-      console.log('Converting DOCX to PDF...');
-      await new Promise((resolve, reject) => {
-        docxToPdf(reportPath, pdfPath, (err, result) => {
-          if (err) {
-            console.error('Error converting to PDF:', err);
-            reject(err);
-          } else {
-            console.log('PDF conversion successful');
-            resolve(result);
-          }
+      try {
+        // Import docx-pdf converter
+        const docxToPdf = require('docx-pdf');
+        
+        // Convert DOCX to PDF
+        console.log('Converting DOCX to PDF...');
+        console.log(`Source DOCX: ${reportPath}`);
+        console.log(`Target PDF: ${pdfPath}`);
+        
+        await new Promise((resolve, reject) => {
+          docxToPdf(reportPath, pdfPath, (err, result) => {
+            if (err) {
+              console.error('Error converting to PDF:', err);
+              reject(err);
+            } else {
+              console.log('PDF conversion successful');
+              // Verify the PDF file exists
+              if (fs.existsSync(pdfPath)) {
+                console.log(`PDF file created successfully: ${pdfPath}`);
+                console.log(`PDF file size: ${fs.statSync(pdfPath).size} bytes`);
+              } else {
+                console.error(`PDF file was not created at expected path: ${pdfPath}`);
+                reject(new Error('PDF file was not created'));
+              }
+              resolve(result);
+            }
+          });
         });
-      });
-      
-      // Return both file paths but indicate PDF as primary
-      return { 
-        reportPath: pdfPath, 
-        reportFileName: pdfFileName,
-        docxPath: reportPath,
-        docxFileName: reportFileName
-      };
+        
+        // Return both file paths but indicate PDF as primary
+        return { 
+          reportPath: pdfPath, 
+          reportFileName: pdfFileName,
+          docxPath: reportPath,
+          docxFileName: reportFileName,
+          pdfPath: pdfPath,
+          pdfFileName: pdfFileName
+        };
+      } catch (pdfError) {
+        console.error('Failed to generate PDF, falling back to DOCX:', pdfError);
+        // Fall back to DOCX if PDF generation fails
+        return { 
+          reportPath, 
+          reportFileName,
+          docxPath: reportPath,
+          docxFileName: reportFileName,
+          pdfError: pdfError.message
+        };
+      }
     }
 
     // Return just DOCX paths if PDF not requested
@@ -1756,7 +1842,9 @@ async function generateReport(transcript, structuredInsights, meetingTopic = '',
       reportPath, 
       reportFileName,
       docxPath: reportPath,
-      docxFileName: reportFileName
+      docxFileName: reportFileName,
+      pdfPath: null,
+      pdfFileName: null
     };
   } catch (error) {
     console.error('Error generating report:', error);
