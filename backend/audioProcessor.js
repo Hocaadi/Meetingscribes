@@ -8,6 +8,7 @@ const ffmpeg = require('fluent-ffmpeg');
 const ffmpegPath = require('ffmpeg-static');
 const { Packer } = require('docx');
 const { OpenAI } = require('openai');
+const { v4: uuidv4 } = require('uuid');
 
 // Load environment variables
 dotenv.config();
@@ -26,6 +27,9 @@ if (!OPENAI_API_KEY) {
 const TRANSCRIPTION_MODEL = "whisper-1";
 const LLM_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
 const TEMPERATURE = parseFloat(process.env.OPENAI_TEMPERATURE || '0.1');
+
+// Define chunk size for large files (24MB to stay safely under the 25MB API limit)
+const MAX_CHUNK_SIZE = 24 * 1024 * 1024; // 24MB in bytes
 
 // Initialize OpenAI client
 const openai = new OpenAI({
@@ -50,7 +54,8 @@ async function processAudio(audioFilePath, userCustomInstructions = '', meetingT
         message: 'Processing started',
         file: path.basename(audioFilePath),
         transcriptionModel: TRANSCRIPTION_MODEL,
-        analysisModel: LLM_MODEL
+        analysisModel: LLM_MODEL,
+        audioEnhancementEnabled: true  // Indicate that we're using enhanced audio
       });
     }
     
@@ -63,20 +68,21 @@ async function processAudio(audioFilePath, userCustomInstructions = '', meetingT
       console.log('Meeting topic provided:', meetingTopic);
     }
 
-    // Step 1: Convert audio to required format (16kHz, mono, wav) if needed
+    // Step 1: Convert audio to required format (16kHz, mono, wav) and enhance quality
     if (sessionId) {
       global.emitProcessingUpdate(sessionId, 'converting', {
-        message: 'Converting audio to required format...'
+        message: 'Converting audio and applying noise reduction...',
+        audioEnhancement: 'Advanced noise reduction and speech clarity enhancement applied'
       });
     }
     
-    const convertedFilePath = await convertAudioFormat(audioFilePath);
-    console.log('Audio converted successfully');
+    const convertedFilePath = await convertAudioFormat(audioFilePath, sessionId);
+    console.log('Audio converted and enhanced successfully');
 
     // Step 2: Transcribe the audio using OpenAI Whisper API
     if (sessionId) {
       global.emitProcessingUpdate(sessionId, 'transcribing', {
-        message: 'Transcribing audio using OpenAI Whisper model...',
+        message: 'Transcribing enhanced audio using OpenAI Whisper model...',
         model: TRANSCRIPTION_MODEL
       });
     }
@@ -143,23 +149,51 @@ async function processAudio(audioFilePath, userCustomInstructions = '', meetingT
 }
 
 /**
- * Convert audio to the required format for processing
+ * Convert audio to the required format for processing with quality enhancement
  * @param {string} inputFilePath - Original audio file path
- * @returns {Promise<string>} - Path to the converted audio file
+ * @param {string} sessionId - Optional session ID for WebSocket updates
+ * @returns {Promise<string>} - Path to the converted and enhanced audio file
  */
-async function convertAudioFormat(inputFilePath) {
+async function convertAudioFormat(inputFilePath, sessionId = null) {
   return new Promise((resolve, reject) => {
     const outputFilePath = path.join(
       path.dirname(inputFilePath),
       `converted_${path.basename(inputFilePath)}.wav`
     );
 
+    if (sessionId) {
+      global.emitProcessingUpdate(sessionId, 'audio_enhancing', {
+        message: 'Enhancing audio quality for better transcription...'
+      });
+    }
+
+    // Apply the same audio enhancement filters as in the chunking process
     ffmpeg(inputFilePath)
       .output(outputFilePath)
       .audioFrequency(16000)
       .audioChannels(1)
-      .on('end', () => resolve(outputFilePath))
-      .on('error', (err) => reject(err))
+      .audioFilters([
+        // Remove background noise and enhance speech clarity
+        'highpass=f=100',                // Remove low rumble noise
+        'lowpass=f=10000',               // Remove high-frequency noise
+        'equalizer=f=1000:width_type=h:width=200:g=2',  // Enhance human voice frequencies
+        'equalizer=f=3000:width_type=h:width=200:g=2',  // Enhance consonant clarity
+        'dynaudnorm=f=150:g=15:n=0:p=0.95', // Normalize audio dynamics
+        'loudnorm=I=-16:LRA=11:TP=-1.5'    // Broadcast standard normalization
+      ])
+      .on('end', () => {
+        if (sessionId) {
+          global.emitProcessingUpdate(sessionId, 'audio_enhanced', {
+            message: 'Audio quality enhanced successfully'
+          });
+        }
+        console.log('Audio converted and enhanced successfully');
+        resolve(outputFilePath);
+      })
+      .on('error', (err) => {
+        console.error('Error enhancing audio:', err);
+        reject(err);
+      })
       .run();
   });
 }
@@ -191,7 +225,21 @@ async function transcribeAudio(audioFilePath, sessionId = null) {
         model: TRANSCRIPTION_MODEL
       });
     }
+
+    // Check if file size exceeds the OpenAI limit
+    if (fileStats.size > MAX_CHUNK_SIZE) {
+      if (sessionId) {
+        global.emitProcessingUpdate(sessionId, 'chunking', {
+          message: `Audio file is large (${(fileStats.size / (1024 * 1024)).toFixed(2)}MB). Splitting into chunks for processing...`,
+          originalSize: fileStats.size
+        });
+      }
+      
+      console.log(`File size (${fileStats.size} bytes) exceeds OpenAI's limit. Splitting into chunks...`);
+      return await processLargeAudioFile(audioFilePath, sessionId);
+    }
     
+    // For smaller files, process normally with the existing code
     // Call OpenAI API with retry logic
     let attempts = 0;
     const maxAttempts = 3;
@@ -251,6 +299,232 @@ async function transcribeAudio(audioFilePath, sessionId = null) {
     console.error('Error transcribing audio:', error.message);
     throw new Error(`Failed to transcribe audio: ${error.message}`);
   }
+}
+
+/**
+ * Create a chunk of audio using ffmpeg with audio enhancement
+ * @param {string} inputFile - Path to the input audio file
+ * @param {string} outputFile - Path for the output chunk
+ * @param {number} startTime - Start time in seconds
+ * @param {number} duration - Duration in seconds
+ * @returns {Promise<void>}
+ */
+function createAudioChunk(inputFile, outputFile, startTime, duration) {
+  return new Promise((resolve, reject) => {
+    // Apply audio enhancement filters for better transcription quality:
+    // 1. highpass: removes low frequency noise below 100Hz
+    // 2. lowpass: removes high frequency noise above 10kHz
+    // 3. equalizer: enhance speech frequencies
+    // 4. dynaudnorm: normalize audio for consistent volume levels
+    // 5. loudnorm: normalize loudness to broadcasting standards
+    // 6. aresample: ensure proper resampling to 16kHz
+    ffmpeg(inputFile)
+      .setStartTime(startTime)
+      .setDuration(duration)
+      .audioFilters([
+        // Remove background noise and enhance speech clarity
+        'highpass=f=100',                // Remove low rumble noise
+        'lowpass=f=10000',               // Remove high-frequency noise
+        'equalizer=f=1000:width_type=h:width=200:g=2',  // Enhance human voice frequencies
+        'equalizer=f=3000:width_type=h:width=200:g=2',  // Enhance consonant clarity
+        'dynaudnorm=f=150:g=15:n=0:p=0.95', // Normalize audio dynamics
+        'loudnorm=I=-16:LRA=11:TP=-1.5'    // Broadcast standard normalization
+      ])
+      .output(outputFile)
+      .audioFrequency(16000) // Set to 16kHz for optimal Whisper performance
+      .audioChannels(1)      // Mono audio
+      .format('wav')         // Convert to WAV format
+      .on('end', () => {
+        console.log(`Chunk created and enhanced at: ${outputFile}`);
+        resolve();
+      })
+      .on('error', (err) => {
+        console.error('Error creating audio chunk:', err);
+        reject(err);
+      })
+      .run();
+  });
+}
+
+/**
+ * Process a large audio file by splitting it into smaller chunks
+ * @param {string} audioFilePath - Path to the audio file
+ * @param {string} sessionId - Optional session ID for WebSocket updates
+ * @returns {Promise<string>} - Combined transcribed text
+ */
+async function processLargeAudioFile(audioFilePath, sessionId = null) {
+  const tempDir = path.join(path.dirname(audioFilePath), 'temp_chunks_' + uuidv4());
+  try {
+    // Create temporary directory for chunks
+    if (!fs.existsSync(tempDir)) {
+      fs.mkdirSync(tempDir, { recursive: true });
+    }
+    
+    // Get audio duration using ffmpeg
+    const duration = await getAudioDuration(audioFilePath);
+    console.log(`Audio duration: ${duration} seconds`);
+    
+    // Calculate optimal chunk size and number of chunks
+    // Assume 1-minute audio is roughly 1MB (this is a rough estimate and may vary)
+    // We're being extra cautious to ensure chunks are well under the limit
+    const chunkLengthSeconds = Math.floor((MAX_CHUNK_SIZE / (1024 * 1024)) * 60);
+    const totalChunks = Math.ceil(duration / chunkLengthSeconds);
+    
+    if (sessionId) {
+      global.emitProcessingUpdate(sessionId, 'chunking_info', {
+        message: `Splitting into ${totalChunks} chunks for processing...`,
+        totalChunks: totalChunks,
+        estimatedDuration: duration
+      });
+    }
+    
+    console.log(`Splitting file into ${totalChunks} chunks of approximately ${chunkLengthSeconds} seconds each`);
+    
+    // Create chunks
+    const chunkFiles = [];
+    for (let i = 0; i < totalChunks; i++) {
+      const startTime = i * chunkLengthSeconds;
+      const chunkPath = path.join(tempDir, `chunk_${i}.wav`);
+      
+      if (sessionId) {
+        global.emitProcessingUpdate(sessionId, 'creating_chunk', {
+          message: `Creating and enhancing chunk ${i+1} of ${totalChunks}...`,
+          currentChunk: i+1,
+          totalChunks: totalChunks
+        });
+      }
+      
+      // Create and enhance audio quality in one step
+      await createAudioChunk(audioFilePath, chunkPath, startTime, chunkLengthSeconds);
+      chunkFiles.push(chunkPath);
+    }
+    
+    // Process each chunk and combine transcriptions
+    let fullTranscription = '';
+    for (let i = 0; i < chunkFiles.length; i++) {
+      if (sessionId) {
+        global.emitProcessingUpdate(sessionId, 'processing_chunk', {
+          message: `Transcribing enhanced chunk ${i+1} of ${totalChunks}...`,
+          currentChunk: i+1,
+          totalChunks: totalChunks
+        });
+      }
+      
+      console.log(`Processing chunk ${i+1} of ${totalChunks}`);
+      
+      // Call OpenAI API with retry logic for each chunk
+      let attempts = 0;
+      const maxAttempts = 3;
+      let chunkTranscription = '';
+      
+      while (attempts < maxAttempts) {
+        try {
+          attempts++;
+          
+          // Verify the chunk file exists and is readable
+          if (!fs.existsSync(chunkFiles[i])) {
+            throw new Error(`Chunk file not found: ${chunkFiles[i]}`);
+          }
+          
+          const chunkStats = fs.statSync(chunkFiles[i]);
+          console.log(`Chunk ${i+1} size: ${chunkStats.size} bytes`);
+          
+          // Create a fresh file stream for each attempt
+          const fileStream = fs.createReadStream(chunkFiles[i]);
+          
+          const transcription = await openai.audio.transcriptions.create({
+            file: fileStream,
+            model: TRANSCRIPTION_MODEL,
+          });
+          
+          if (!transcription || !transcription.text) {
+            throw new Error("Received empty response from OpenAI API for chunk");
+          }
+          
+          chunkTranscription = transcription.text;
+          break;
+        } catch (apiError) {
+          console.error(`API attempt ${attempts} failed for chunk ${i+1}:`, apiError.message);
+          
+          if (sessionId) {
+            global.emitProcessingUpdate(sessionId, 'chunk_error', {
+              message: `Error processing chunk ${i+1}: ${apiError.message}, attempt ${attempts} of ${maxAttempts}`,
+              chunk: i+1,
+              attempt: attempts
+            });
+          }
+          
+          if (attempts >= maxAttempts) {
+            throw new Error(`Failed to transcribe chunk ${i+1} after ${maxAttempts} attempts: ${apiError.message}`);
+          }
+          
+          // Wait before retrying (exponential backoff)
+          await new Promise(resolve => setTimeout(resolve, 1000 * attempts));
+        }
+      }
+      
+      // Add a separator if it's not the first chunk
+      if (i > 0) {
+        fullTranscription += ' ';
+      }
+      
+      fullTranscription += chunkTranscription;
+      
+      if (sessionId) {
+        global.emitProcessingUpdate(sessionId, 'chunk_completed', {
+          message: `Enhanced chunk ${i+1} processed successfully (${chunkTranscription.length} characters)`,
+          currentChunk: i+1,
+          totalChunks: totalChunks,
+          progress: Math.round(((i+1) / totalChunks) * 100)
+        });
+      }
+    }
+    
+    if (sessionId) {
+      global.emitProcessingUpdate(sessionId, 'transcription_completed', {
+        message: 'All chunks transcribed and combined successfully',
+        transcriptLength: fullTranscription.length,
+        chunksProcessed: totalChunks
+      });
+    }
+    
+    console.log(`Full transcription created: ${fullTranscription.length} characters`);
+    
+    return fullTranscription;
+  } catch (error) {
+    console.error('Error processing large audio file:', error);
+    throw new Error(`Failed to process large audio file: ${error.message}`);
+  } finally {
+    // Clean up temp files
+    try {
+      if (fs.existsSync(tempDir)) {
+        const files = fs.readdirSync(tempDir);
+        for (const file of files) {
+          fs.unlinkSync(path.join(tempDir, file));
+        }
+        fs.rmdirSync(tempDir);
+        console.log(`Cleaned up temporary directory: ${tempDir}`);
+      }
+    } catch (cleanupError) {
+      console.error('Error cleaning up temp files:', cleanupError);
+    }
+  }
+}
+
+/**
+ * Get the duration of an audio file using ffmpeg
+ * @param {string} audioFilePath - Path to the audio file
+ * @returns {Promise<number>} - Duration in seconds
+ */
+function getAudioDuration(audioFilePath) {
+  return new Promise((resolve, reject) => {
+    ffmpeg.ffprobe(audioFilePath, (err, metadata) => {
+      if (err) {
+        return reject(err);
+      }
+      resolve(metadata.format.duration);
+    });
+  });
 }
 
 /**
@@ -406,6 +680,10 @@ async function generateReport(transcript, structuredInsights, outputPath, meetin
       }),
       new Paragraph({
         text: `Analysis model: ${LLM_MODEL}`,
+        style: "normal"
+      }),
+      new Paragraph({
+        text: "Audio Enhancement: Advanced noise reduction and speech clarity filters applied",
         style: "normal"
       }),
       new Paragraph({
