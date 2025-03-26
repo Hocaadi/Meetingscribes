@@ -131,6 +131,10 @@ app.post('/api/upload', upload.single('audioFile'), async (req, res) => {
       console.log(`Meeting topic selected: ${meetingTopic}`);
     }
     
+    // Get output format preference (docx or pdf)
+    const format = req.body.format || 'docx';
+    console.log(`Output format selected: ${format}`);
+    
     // Get session ID for WebSocket updates
     const sessionId = req.body.sessionId;
     
@@ -146,13 +150,25 @@ app.post('/api/upload', upload.single('audioFile'), async (req, res) => {
     
     // Process the audio file
     try {
-      const result = await processAudio(req.file.path, userCustomInstructions, meetingTopic, sessionId);
+      const result = await processAudio(req.file.path, userCustomInstructions, meetingTopic, sessionId, format);
+      
+      // Determine which file to return as primary based on format
+      const isPdf = format === 'pdf';
+      const fileName = isPdf ? result.pdfFileName : result.reportFileName;
+      const filePath = isPdf ? result.pdfPath : result.reportPath;
+      
       return res.status(200).json({ 
         message: 'File processed successfully',
-        reportPath: result.reportPath,
-        fileName: result.fileName,
-        reportName: result.fileName,
-        reportUrl: `/api/download/${result.fileName}`
+        reportPath: filePath,
+        fileName: fileName,
+        reportName: fileName,
+        reportUrl: `/api/download/${fileName}`,
+        format: format,
+        // Include both formats if available for client-side options
+        docxFileName: result.docxFileName,
+        docxUrl: `/api/download/${result.docxFileName}`,
+        pdfFileName: result.pdfFileName,
+        pdfUrl: isPdf ? `/api/download/${result.pdfFileName}` : null
       });
     } catch (processingError) {
       console.error('Detailed processing error:', processingError);

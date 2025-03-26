@@ -154,6 +154,9 @@ const FileUpload = () => {
   const [transcriptionModel, setTranscriptionModel] = useState('');
   const [analysisModel, setAnalysisModel] = useState('');
   
+  // Inside the FileUpload component state declarations, add:
+  const [documentFormat, setDocumentFormat] = useState('docx');
+  
   // Initialize WebSocket connection and session ID
   useEffect(() => {
     // Generate a unique session ID for this client
@@ -190,7 +193,8 @@ const FileUpload = () => {
         setResult({
           message: 'Processing completed successfully',
           fileName: update.reportName || update.fileName, // Handle both property names
-          reportUrl: update.reportUrl || `/download/${update.reportName || update.fileName}` // Ensure we have a URL
+          reportUrl: update.reportUrl || `/download/${update.reportName || update.fileName}`, // Ensure we have a URL
+          format: update.reportName?.endsWith('.pdf') ? 'pdf' : 'docx' // Set format based on report name
         });
       }
       
@@ -357,6 +361,9 @@ const FileUpload = () => {
         formData.append('sessionId', sessionId);
       }
       
+      // Add format preference
+      formData.append('format', documentFormat);
+      
       const response = await axios.post(config.UPLOAD_ENDPOINT, formData, {
         headers: {
           'Content-Type': 'multipart/form-data'
@@ -383,7 +390,8 @@ const FileUpload = () => {
         
         setResult({
           message: response.data.message,
-          fileName: response.data.fileName
+          fileName: response.data.fileName,
+          format: response.data.fileName?.endsWith('.pdf') ? 'pdf' : 'docx' // Set format based on response
         });
         
         // Clean up interval
@@ -401,24 +409,28 @@ const FileUpload = () => {
     }
   };
 
-  const handleDownload = async () => {
-    if (!result || (!result.fileName && !result.reportUrl)) {
-      setError('No file available for download');
-      return;
+  const handleDownload = (format = 'primary') => {
+    if (!result) return;
+    
+    let downloadUrl;
+    
+    if (format === 'primary') {
+      // Use the main report URL
+      downloadUrl = result.reportUrl;
+    } else if (format === 'docx' && result.docxUrl) {
+      // Use the DOCX URL if specifically requested
+      downloadUrl = result.docxUrl;
+    } else if (format === 'pdf' && result.pdfUrl) {
+      // Use the PDF URL if specifically requested
+      downloadUrl = result.pdfUrl;
+    } else {
+      // Fallback to the main report URL
+      downloadUrl = result.reportUrl;
     }
     
-    try {
-      // Use the reportUrl directly if available, otherwise construct it
-      const downloadUrl = result.reportUrl || `${config.API_URL}/api/download/${result.fileName}`;
-      
-      const response = await axios.get(downloadUrl, {
-        responseType: 'blob'
-      });
-      
-      saveAs(response.data, result.fileName);
-    } catch (error) {
-      setError('Error downloading file: ' + (error.message || 'Unknown error'));
-      console.error('Download error:', error);
+    if (downloadUrl) {
+      // Try to trigger download via anchor click
+      window.open(downloadUrl, '_blank');
     }
   };
 
@@ -512,6 +524,32 @@ const FileUpload = () => {
                   </Form.Group>
                 </Card.Body>
               </Card>
+              
+              {/* Document Format Selection */}
+              <Form.Group className="mb-3">
+                <Form.Label>Document Format</Form.Label>
+                <div className="d-flex">
+                  <Form.Check
+                    type="radio"
+                    id="format-docx"
+                    name="documentFormat"
+                    label="Word Document (DOCX)"
+                    className="me-3"
+                    checked={documentFormat === 'docx'}
+                    onChange={() => setDocumentFormat('docx')}
+                    disabled={uploading}
+                  />
+                  <Form.Check
+                    type="radio"
+                    id="format-pdf"
+                    name="documentFormat" 
+                    label="PDF Document"
+                    checked={documentFormat === 'pdf'}
+                    onChange={() => setDocumentFormat('pdf')}
+                    disabled={uploading}
+                  />
+                </div>
+              </Form.Group>
               
               <Card className="mt-3 custom-instructions-card">
                 <Card.Header 
@@ -693,13 +731,46 @@ const FileUpload = () => {
                 )}
               </div>
               
-              <div className="d-flex justify-content-center mt-4">
-                <Button variant="outline-secondary" className="me-3" onClick={handleReset}>
+              <div className="d-flex flex-column align-items-center mt-4">
+                <div className="mb-3">
+                  {/* Main Download Button */}
+                  <Button 
+                    variant="primary" 
+                    onClick={() => handleDownload('primary')}
+                    className="mb-2 d-block"
+                  >
+                    <i className={`bi ${result.format === 'pdf' ? 'bi-file-earmark-pdf' : 'bi-file-earmark-word'} me-2`}></i>
+                    Download Report ({result.format?.toUpperCase() || 'DOCX'})
+                  </Button>
+                  
+                  {/* Alternative Format (if available) */}
+                  {result.format === 'pdf' && result.docxUrl && (
+                    <Button 
+                      variant="outline-secondary" 
+                      onClick={() => handleDownload('docx')}
+                      size="sm"
+                      className="d-block mt-2"
+                    >
+                      <i className="bi bi-file-earmark-word me-2"></i>
+                      Download as DOCX
+                    </Button>
+                  )}
+                  
+                  {result.format === 'docx' && result.pdfUrl && (
+                    <Button 
+                      variant="outline-secondary" 
+                      onClick={() => handleDownload('pdf')}
+                      size="sm"
+                      className="d-block mt-2"
+                    >
+                      <i className="bi bi-file-earmark-pdf me-2"></i>
+                      Download as PDF
+                    </Button>
+                  )}
+                </div>
+                
+                <Button variant="outline-secondary" className="mt-3" onClick={handleReset}>
                   Process Another File
-                </Button>
-                <Button variant="primary" onClick={handleDownload}>
-                  <i className="bi bi-download me-2"></i>
-                  Download Report
                 </Button>
               </div>
             </div>

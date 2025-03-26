@@ -42,9 +42,10 @@ const openai = new OpenAI({
  * @param {string} userCustomInstructions - Optional custom instructions from the user
  * @param {string} meetingTopic - Optional meeting topic for context
  * @param {string} sessionId - Optional session ID for WebSocket updates
+ * @param {string} format - Output format, either 'docx' (default) or 'pdf'
  * @returns {Promise<Object>} - Object containing the transcript and structured insights
  */
-async function processAudio(filePath, userCustomInstructions = null, meetingTopic = null, sessionId = null) {
+async function processAudio(filePath, userCustomInstructions = null, meetingTopic = null, sessionId = null, format = 'docx') {
   try {
     console.log(`Processing audio file: ${filePath}`);
     
@@ -118,16 +119,17 @@ async function processAudio(filePath, userCustomInstructions = null, meetingTopi
     }
     
     console.log('Generating final report...');
-    const { reportPath, reportFileName } = await generateReport(transcript, structuredInsights, meetingTopic);
+    const { reportPath, reportFileName, docxPath, docxFileName, pdfPath, pdfFileName } = await generateReport(transcript, structuredInsights, meetingTopic, format);
     console.log('Final report generated successfully at:', reportPath);
     
     if (sessionId) {
       global.emitProcessingUpdate(sessionId, 'completed', {
         message: 'Processing completed successfully',
-        reportUrl: `/api/download/${reportFileName}`,
-        reportName: reportFileName,
-        status: "completed",
-        timestamp: new Date().toISOString()
+        reportPath,
+        reportFileName,
+        format,
+        docxFileName,
+        pdfFileName
       });
     }
 
@@ -137,11 +139,14 @@ async function processAudio(filePath, userCustomInstructions = null, meetingTopi
     }
 
     return {
-      reportPath: reportPath,
+      reportPath,
+      reportFileName,
       fileName: reportFileName,
-      reportUrl: `/api/download/${reportFileName}`,
-      transcript: transcript,
-      structuredInsights: structuredInsights
+      docxPath,
+      docxFileName,
+      pdfPath,
+      pdfFileName,
+      format
     };
   } catch (error) {
     console.error('Error in audio processing:', error);
@@ -620,20 +625,45 @@ async function extractStructuredInsights(transcript, userCustomInstructions = ''
 }
 
 /**
- * Generate a professionally formatted Word document with the analysis results
- * @param {string} transcript - Transcript text
- * @param {string} structuredInsights - Structured insights text
- * @param {string} meetingTopic - Optional meeting topic for the report header
- * @returns {Promise<{reportPath: string, reportFileName: string}>} - Object containing the report path and file name
+ * Generates a Word document with the analysis results
+ * @param {string} transcript - The transcript text
+ * @param {string} structuredInsights - The structured insights extracted from the transcript
+ * @param {string} meetingTopic - The meeting topic (optional)
+ * @param {string} format - Output format, either 'docx' (default) or 'pdf'
+ * @returns {Promise<{reportPath: string, reportFileName: string, pdfPath: string, pdfFileName: string}>} - Object containing the report paths and file names
  */
-async function generateReport(transcript, structuredInsights, meetingTopic = '') {
+async function generateReport(transcript, structuredInsights, meetingTopic = '', format = 'docx') {
   try {
+    // Log start of document generation
+    console.log('Starting professional document generation...');
+    
     // Get report title with topic if available
     let reportTitle = "Meeting Analysis Report";
     if (meetingTopic && meetingTopic.trim() !== '') {
       const topicLabel = meetingTopic.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
       reportTitle = `${topicLabel} Meeting Analysis Report`;
     }
+    
+    // Create formatted date string for filename (e.g., "26Jan10am")
+    const now = new Date();
+    const day = now.getDate().toString().padStart(2, '0');
+    const month = now.toLocaleString('en-US', { month: 'short' }).substring(0, 3);
+    const hour = now.getHours() % 12 || 12; // Convert 24h to 12h format
+    const ampm = now.getHours() >= 12 ? 'pm' : 'am';
+    
+    // Generate base filename with date and topic
+    const topicForFilename = meetingTopic 
+      ? '_' + meetingTopic.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase().substring(0, 20)
+      : '';
+    const baseFileName = `${day}${month}${hour}${ampm}${topicForFilename}`;
+    
+    // Generate both filenames regardless of format selection
+    const reportFileName = `meeting_report_${baseFileName}.docx`;
+    const pdfFileName = `meeting_report_${baseFileName}.pdf`;
+    
+    // Generate paths for both file types
+    const reportPath = path.join(__dirname, 'uploads', reportFileName);
+    const pdfPath = path.join(__dirname, 'uploads', pdfFileName);
 
     // Create sections array with content
     const children = [];
@@ -1691,11 +1721,43 @@ async function generateReport(transcript, structuredInsights, meetingTopic = '')
 
     // Use Packer to save the document
     const buffer = await Packer.toBuffer(doc);
-    const reportFileName = `meeting_analysis_report_${Date.now()}.docx`;
-    const reportPath = path.join(__dirname, 'uploads', reportFileName);
     fs.writeFileSync(reportPath, buffer);
 
-    return { reportPath, reportFileName };
+    // Only generate PDF if requested
+    if (format === 'pdf') {
+      // Import docx-pdf converter
+      const docxToPdf = require('docx-pdf');
+      
+      // Convert DOCX to PDF
+      console.log('Converting DOCX to PDF...');
+      await new Promise((resolve, reject) => {
+        docxToPdf(reportPath, pdfPath, (err, result) => {
+          if (err) {
+            console.error('Error converting to PDF:', err);
+            reject(err);
+          } else {
+            console.log('PDF conversion successful');
+            resolve(result);
+          }
+        });
+      });
+      
+      // Return both file paths but indicate PDF as primary
+      return { 
+        reportPath: pdfPath, 
+        reportFileName: pdfFileName,
+        docxPath: reportPath,
+        docxFileName: reportFileName
+      };
+    }
+
+    // Return just DOCX paths if PDF not requested
+    return { 
+      reportPath, 
+      reportFileName,
+      docxPath: reportPath,
+      docxFileName: reportFileName
+    };
   } catch (error) {
     console.error('Error generating report:', error);
     throw new Error(`Failed to generate report document: ${error.message}`);
