@@ -42,7 +42,17 @@ const STATUS_ICONS = {
   analysis_error: 'exclamation-triangle',
   generating_document: 'file-earmark-word',
   completed: 'check-circle-fill',
-  error: 'x-circle-fill'
+  error: 'x-circle-fill',
+  // Chunking-related status icons
+  chunking: 'scissors',
+  chunking_info: 'info-circle',
+  creating_chunk: 'file-earmark-plus',
+  processing_chunk: 'file-earmark-music',
+  chunk_completed: 'check-square',
+  chunk_error: 'exclamation-square',
+  // Audio enhancement status icons
+  audio_enhancing: 'music-note-beamed',
+  audio_enhanced: 'filter-square'
 };
 
 // Status Colors for different processing stages
@@ -62,7 +72,17 @@ const STATUS_COLORS = {
   analysis_error: 'danger',
   generating_document: 'primary',
   completed: 'success',
-  error: 'danger'
+  error: 'danger',
+  // Chunking-related status colors
+  chunking: 'primary',
+  chunking_info: 'info',
+  creating_chunk: 'primary',
+  processing_chunk: 'info',
+  chunk_completed: 'success',
+  chunk_error: 'warning',
+  // Audio enhancement status colors
+  audio_enhancing: 'info',
+  audio_enhanced: 'success'
 };
 
 const FileUpload = () => {
