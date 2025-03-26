@@ -28,8 +28,8 @@ const TRANSCRIPTION_MODEL = "whisper-1";
 const LLM_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
 const TEMPERATURE = parseFloat(process.env.OPENAI_TEMPERATURE || '0.1');
 
-// Define chunk size for large files (24MB to stay safely under the 25MB API limit)
-const MAX_CHUNK_SIZE = 24 * 1024 * 1024; // 24MB in bytes
+// Maximum chunk size for audio processing (15MB to stay well under the 25MB API limit)
+const MAX_CHUNK_SIZE = 15 * 1024 * 1024; // 15MB in bytes
 
 // Initialize OpenAI client
 const openai = new OpenAI({
@@ -37,26 +37,55 @@ const openai = new OpenAI({
 });
 
 /**
- * Process audio file to generate a meeting analysis report
- * @param {string} audioFilePath - Path to the uploaded audio file
+ * Process an audio file to generate a transcript and extract structured insights
+ * @param {string} filePath - Path to the audio file
  * @param {string} userCustomInstructions - Optional custom instructions from the user
- * @param {string} meetingTopic - Optional meeting topic/domain context
+ * @param {string} meetingTopic - Optional meeting topic for context
  * @param {string} sessionId - Optional session ID for WebSocket updates
- * @returns {Promise<Object>} - Object containing report file path and name
+ * @returns {Promise<Object>} - Object containing the transcript and structured insights
  */
-async function processAudio(audioFilePath, userCustomInstructions = '', meetingTopic = '', sessionId = null) {
+async function processAudio(filePath, userCustomInstructions = null, meetingTopic = null, sessionId = null) {
   try {
-    console.log('Processing audio file:', audioFilePath);
+    console.log(`Processing audio file: ${filePath}`);
     
-    // Send initial status update
+    // Apply audio enhancement once at the beginning
     if (sessionId) {
-      global.emitProcessingUpdate(sessionId, 'started', {
-        message: 'Processing started',
-        file: path.basename(audioFilePath),
-        transcriptionModel: TRANSCRIPTION_MODEL,
-        analysisModel: LLM_MODEL,
-        audioEnhancementEnabled: true  // Indicate that we're using enhanced audio
+      global.emitProcessingUpdate(sessionId, 'status', {
+        message: 'Starting audio enhancement...',
+        audioEnhancementEnabled: true
       });
+    }
+    
+    // Convert and enhance the audio quality for better transcription
+    const enhancedFilePath = await convertAudioFormat(filePath, sessionId);
+    console.log(`Enhanced audio file created: ${enhancedFilePath}`);
+    
+    // Check the size of the enhanced file
+    const stats = fs.statSync(enhancedFilePath);
+    const fileSizeMB = stats.size / (1024 * 1024);
+    console.log(`Enhanced audio file size: ${fileSizeMB.toFixed(2)}MB`);
+    
+    let transcript;
+    
+    // Use a different approach for large files
+    if (stats.size > MAX_CHUNK_SIZE) {
+      if (sessionId) {
+        global.emitProcessingUpdate(sessionId, 'status', {
+          message: `Large file detected (${fileSizeMB.toFixed(2)}MB). Processing in chunks...`,
+          audioEnhancementEnabled: true
+        });
+      }
+      console.log(`File size exceeds ${(MAX_CHUNK_SIZE / (1024 * 1024)).toFixed(1)}MB. Processing in chunks...`);
+      transcript = await processLargeAudioFile(enhancedFilePath, sessionId);
+    } else {
+      if (sessionId) {
+        global.emitProcessingUpdate(sessionId, 'status', {
+          message: 'Converting audio to text with Whisper API...',
+          audioEnhancementEnabled: true
+        });
+      }
+      // For smaller files, process directly with the enhanced audio
+      transcript = await transcribeAudio(enhancedFilePath);
     }
     
     // Log context information for better debugging
@@ -67,72 +96,49 @@ async function processAudio(audioFilePath, userCustomInstructions = '', meetingT
     if (meetingTopic) {
       console.log('Meeting topic provided:', meetingTopic);
     }
-
-    // Step 1: Convert audio to required format (16kHz, mono, wav) and enhance quality
-    if (sessionId) {
-      global.emitProcessingUpdate(sessionId, 'converting', {
-        message: 'Converting audio and applying noise reduction...',
-        audioEnhancement: 'Advanced noise reduction and speech clarity enhancement applied'
-      });
-    }
     
-    const convertedFilePath = await convertAudioFormat(audioFilePath, sessionId);
-    console.log('Audio converted and enhanced successfully');
-
-    // Step 2: Transcribe the audio using OpenAI Whisper API
-    if (sessionId) {
-      global.emitProcessingUpdate(sessionId, 'transcribing', {
-        message: 'Transcribing enhanced audio using OpenAI Whisper model...',
-        model: TRANSCRIPTION_MODEL
-      });
-    }
-    
-    console.log('Transcribing audio...');
-    const transcript = await transcribeAudio(convertedFilePath, sessionId);
-    console.log('Audio transcribed successfully');
-
     // Step 3: Extract structured insights using OpenAI API
     if (sessionId) {
       global.emitProcessingUpdate(sessionId, 'analyzing', {
-        message: 'Analyzing transcript with AI...',
+        message: 'Analyzing transcript using AI...',
         model: LLM_MODEL,
         transcriptLength: transcript.length
       });
     }
     
-    console.log('Extracting structured insights...');
-    const structuredInsights = await extractStructuredInsights(transcript, userCustomInstructions, meetingTopic, sessionId);
-    console.log('Insights extracted successfully');
-
-    // Step 4: Generate document with results
+    console.log('Extracting structured insights from transcript...');
+    const structuredInsights = await extractStructuredInsights(transcript, userCustomInstructions, meetingTopic);
+    console.log('Structured insights extracted successfully');
+    
+    // Step 4: Generate the final report
     if (sessionId) {
-      global.emitProcessingUpdate(sessionId, 'generating_document', {
-        message: 'Generating final report document...'
+      global.emitProcessingUpdate(sessionId, 'generating_report', {
+        message: 'Generating final meeting report...'
       });
     }
     
-    console.log('Generating report document...');
-    const reportFileName = `meeting_analysis_report_${Date.now()}.docx`;
-    const reportPath = path.join(__dirname, 'uploads', reportFileName);
-    await generateReport(transcript, structuredInsights, reportPath, meetingTopic);
-    console.log('Report generated successfully at:', reportPath);
-
-    // Clean up temporary files
-    if (convertedFilePath !== audioFilePath) {
-      fs.unlinkSync(convertedFilePath);
-    }
-
-    // Send completion update
+    console.log('Generating final report...');
+    const { reportPath, reportFileName } = await generateReport(transcript, structuredInsights, meetingTopic);
+    console.log('Final report generated successfully at:', reportPath);
+    
     if (sessionId) {
       global.emitProcessingUpdate(sessionId, 'completed', {
         message: 'Processing completed successfully',
-        fileName: reportFileName
+        reportUrl: `/download/${reportFileName}`,
+        reportName: reportFileName
       });
+    }
+
+    // Clean up temporary files
+    if (enhancedFilePath !== filePath) {
+      fs.unlinkSync(enhancedFilePath);
     }
 
     return {
       reportPath: reportPath,
-      fileName: reportFileName
+      fileName: reportFileName,
+      transcript: transcript,
+      structuredInsights: structuredInsights
     };
   } catch (error) {
     console.error('Error in audio processing:', error);
@@ -149,178 +155,29 @@ async function processAudio(audioFilePath, userCustomInstructions = '', meetingT
 }
 
 /**
- * Convert audio to the required format for processing with quality enhancement
- * @param {string} inputFilePath - Original audio file path
+ * Converts audio to a format suitable for OpenAI's API with audio enhancement
+ * @param {string} inputFile - Path to the input audio file
  * @param {string} sessionId - Optional session ID for WebSocket updates
  * @returns {Promise<string>} - Path to the converted and enhanced audio file
  */
-async function convertAudioFormat(inputFilePath, sessionId = null) {
+async function convertAudioFormat(inputFile, sessionId = null) {
   return new Promise((resolve, reject) => {
-    const outputFilePath = path.join(
-      path.dirname(inputFilePath),
-      `converted_${path.basename(inputFilePath)}.wav`
-    );
-
-    if (sessionId) {
-      global.emitProcessingUpdate(sessionId, 'audio_enhancing', {
-        message: 'Enhancing audio quality for better transcription...'
-      });
-    }
-
-    // Apply the same audio enhancement filters as in the chunking process
-    ffmpeg(inputFilePath)
-      .output(outputFilePath)
-      .audioFrequency(16000)
-      .audioChannels(1)
-      .audioFilters([
-        // Remove background noise and enhance speech clarity
-        'highpass=f=100',                // Remove low rumble noise
-        'lowpass=f=10000',               // Remove high-frequency noise
-        'equalizer=f=1000:width_type=h:width=200:g=2',  // Enhance human voice frequencies
-        'equalizer=f=3000:width_type=h:width=200:g=2',  // Enhance consonant clarity
-        'dynaudnorm=f=150:g=15:n=0:p=0.95', // Normalize audio dynamics
-        'loudnorm=I=-16:LRA=11:TP=-1.5'    // Broadcast standard normalization
-      ])
-      .on('end', () => {
-        if (sessionId) {
-          global.emitProcessingUpdate(sessionId, 'audio_enhanced', {
-            message: 'Audio quality enhanced successfully'
-          });
-        }
-        console.log('Audio converted and enhanced successfully');
-        resolve(outputFilePath);
-      })
-      .on('error', (err) => {
-        console.error('Error enhancing audio:', err);
-        reject(err);
-      })
-      .run();
-  });
-}
-
-/**
- * Transcribe audio using OpenAI Whisper API with the SDK
- * @param {string} audioFilePath - Path to the audio file
- * @param {string} sessionId - Optional session ID for WebSocket updates
- * @returns {Promise<string>} - Transcribed text
- */
-async function transcribeAudio(audioFilePath, sessionId = null) {
-  try {
-    // Verify the file exists and is readable
-    if (!fs.existsSync(audioFilePath)) {
-      throw new Error(`Audio file not found at path: ${audioFilePath}`);
-    }
-    
-    const fileStats = fs.statSync(audioFilePath);
-    if (fileStats.size === 0) {
-      throw new Error(`Audio file is empty: ${audioFilePath}`);
-    }
-    
-    console.log(`Attempting to transcribe file: ${audioFilePath} (${fileStats.size} bytes)`);
+    const outputDir = path.dirname(inputFile);
+    const timestamp = Date.now();
+    // Use a naming convention that clearly marks this as the enhanced version
+    const outputFile = path.join(outputDir, `converted_enhanced_${timestamp}.wav`);
     
     if (sessionId) {
-      global.emitProcessingUpdate(sessionId, 'transcription_started', {
-        message: 'Starting audio transcription...',
-        fileSize: fileStats.size,
-        model: TRANSCRIPTION_MODEL
+      global.emitProcessingUpdate(sessionId, 'enhancing_audio', {
+        message: 'Applying advanced noise reduction and speech clarity filters...',
+        stage: 'audio_enhancement'
       });
     }
-
-    // Check if file size exceeds the OpenAI limit
-    if (fileStats.size > MAX_CHUNK_SIZE) {
-      if (sessionId) {
-        global.emitProcessingUpdate(sessionId, 'chunking', {
-          message: `Audio file is large (${(fileStats.size / (1024 * 1024)).toFixed(2)}MB). Splitting into chunks for processing...`,
-          originalSize: fileStats.size
-        });
-      }
-      
-      console.log(`File size (${fileStats.size} bytes) exceeds OpenAI's limit. Splitting into chunks...`);
-      return await processLargeAudioFile(audioFilePath, sessionId);
-    }
     
-    // For smaller files, process normally with the existing code
-    // Call OpenAI API with retry logic
-    let attempts = 0;
-    const maxAttempts = 3;
+    console.log('Enhancing audio quality with noise reduction and clarity filters');
     
-    while (attempts < maxAttempts) {
-      try {
-        attempts++;
-        
-        // Create a fresh file stream for each attempt
-        const fileStream = fs.createReadStream(audioFilePath);
-        
-        if (sessionId && attempts > 1) {
-          global.emitProcessingUpdate(sessionId, 'transcription_retry', {
-            message: `Retrying transcription (attempt ${attempts} of ${maxAttempts})...`,
-            attempt: attempts,
-            maxAttempts: maxAttempts
-          });
-        }
-        
-        const transcription = await openai.audio.transcriptions.create({
-          file: fileStream,
-          model: TRANSCRIPTION_MODEL,
-        });
-        
-        if (!transcription || !transcription.text) {
-          throw new Error("Received empty response from OpenAI API");
-        }
-        
-        if (sessionId) {
-          global.emitProcessingUpdate(sessionId, 'transcription_completed', {
-            message: 'Transcription completed successfully',
-            transcriptLength: transcription.text.length
-          });
-        }
-        
-        return transcription.text;
-      } catch (apiError) {
-        console.error(`API attempt ${attempts} failed:`, apiError.message);
-        
-        if (sessionId) {
-          global.emitProcessingUpdate(sessionId, 'transcription_error', {
-            message: `Transcription attempt ${attempts} failed: ${apiError.message}`,
-            attempt: attempts,
-            maxAttempts: maxAttempts
-          });
-        }
-        
-        if (attempts >= maxAttempts) {
-          throw new Error(`Failed to transcribe after ${maxAttempts} attempts: ${apiError.message}`);
-        }
-        
-        // Wait before retrying (exponential backoff)
-        await new Promise(resolve => setTimeout(resolve, 1000 * attempts));
-      }
-    }
-  } catch (error) {
-    console.error('Error transcribing audio:', error.message);
-    throw new Error(`Failed to transcribe audio: ${error.message}`);
-  }
-}
-
-/**
- * Create a chunk of audio using ffmpeg with audio enhancement
- * @param {string} inputFile - Path to the input audio file
- * @param {string} outputFile - Path for the output chunk
- * @param {number} startTime - Start time in seconds
- * @param {number} duration - Duration in seconds
- * @returns {Promise<void>}
- */
-function createAudioChunk(inputFile, outputFile, startTime, duration) {
-  return new Promise((resolve, reject) => {
-    // Apply audio enhancement filters for better transcription quality:
-    // 1. highpass: removes low frequency noise below 100Hz
-    // 2. lowpass: removes high frequency noise above 10kHz
-    // 3. equalizer: enhance speech frequencies
-    // 4. dynaudnorm: normalize audio for consistent volume levels
-    // 5. loudnorm: normalize loudness to broadcasting standards
-    // 6. aresample: ensure proper resampling to 16kHz
+    // Apply comprehensive audio enhancement for optimal transcription quality
     ffmpeg(inputFile)
-      .setStartTime(startTime)
-      .setDuration(duration)
       .audioFilters([
         // Remove background noise and enhance speech clarity
         'highpass=f=100',                // Remove low rumble noise
@@ -331,11 +188,92 @@ function createAudioChunk(inputFile, outputFile, startTime, duration) {
         'loudnorm=I=-16:LRA=11:TP=-1.5'    // Broadcast standard normalization
       ])
       .output(outputFile)
+      .audioFrequency(16000)  // 16kHz sample rate for Whisper
+      .audioChannels(1)       // Convert to mono
+      .format('wav')          // Convert to WAV format
+      .on('end', () => {
+        console.log(`Audio converted and enhanced: ${outputFile}`);
+        if (sessionId) {
+          global.emitProcessingUpdate(sessionId, 'audio_enhanced', {
+            message: 'Audio successfully enhanced with noise reduction and speech clarity filters',
+            enhancedPath: outputFile
+          });
+        }
+        resolve(outputFile);
+      })
+      .on('error', (err) => {
+        console.error('Error converting audio:', err);
+        reject(err);
+      })
+      .run();
+  });
+}
+
+/**
+ * Transcribe audio using the OpenAI Whisper API
+ * @param {string} audioFilePath - Path to the audio file
+ * @param {string} sessionId - Optional session ID for WebSocket updates
+ * @returns {Promise<string>} - Transcribed text
+ */
+async function transcribeAudio(audioFilePath, sessionId = null) {
+  try {
+    // Check file size before sending to API
+    const stats = fs.statSync(audioFilePath);
+    const fileSizeMB = stats.size / (1024 * 1024);
+    console.log(`File size before transcription: ${fileSizeMB.toFixed(2)}MB`);
+    
+    // OpenAI has a limit of 25MB (26,214,400 bytes)
+    if (stats.size > 26214400) {
+      console.warn(`WARNING: File size (${fileSizeMB.toFixed(2)}MB) exceeds OpenAI's 25MB limit!`);
+      if (sessionId) {
+        global.emitProcessingUpdate(sessionId, 'warning', {
+          message: `WARNING: File size (${fileSizeMB.toFixed(2)}MB) exceeds OpenAI's 25MB limit!`,
+          resolution: 'Attempting to process anyway, but may fail'
+        });
+      }
+    }
+    
+    // Create a readable stream for the audio file
+    const audioReadStream = fs.createReadStream(audioFilePath);
+    
+    console.log(`Sending file to OpenAI Whisper API (${TRANSCRIPTION_MODEL})...`);
+    
+    // Make API request to OpenAI
+    const response = await openai.audio.transcriptions.create({
+      file: audioReadStream,
+      model: TRANSCRIPTION_MODEL,
+      language: 'en', // Specify English for better accuracy
+      response_format: 'text'
+    });
+    
+    return response;
+  } catch (error) {
+    console.error('Error transcribing audio:', error);
+    throw error;
+  }
+}
+
+/**
+ * Create a chunk of audio using ffmpeg without re-enhancing (using the already enhanced audio)
+ * @param {string} inputFile - Path to the input audio file
+ * @param {string} outputFile - Path for the output chunk
+ * @param {number} startTime - Start time in seconds
+ * @param {number} duration - Duration in seconds
+ * @returns {Promise<void>}
+ */
+function createAudioChunk(inputFile, outputFile, startTime, duration) {
+  return new Promise((resolve, reject) => {
+    // We don't need to re-apply audio enhancements since the input file is already enhanced
+    // Just extract the chunk at the proper timestamps
+    ffmpeg(inputFile)
+      .setStartTime(startTime)
+      .setDuration(duration)
+      .output(outputFile)
       .audioFrequency(16000) // Set to 16kHz for optimal Whisper performance
       .audioChannels(1)      // Mono audio
       .format('wav')         // Convert to WAV format
       .on('end', () => {
-        console.log(`Chunk created and enhanced at: ${outputFile}`);
+        console.log(`Chunk created at: ${outputFile}`);
         resolve();
       })
       .on('error', (err) => {
@@ -353,6 +291,14 @@ function createAudioChunk(inputFile, outputFile, startTime, duration) {
  * @returns {Promise<string>} - Combined transcribed text
  */
 async function processLargeAudioFile(audioFilePath, sessionId = null) {
+  // First, make sure we're working with enhanced audio
+  let enhancedAudioPath = audioFilePath;
+  if (!audioFilePath.includes('converted_')) {
+    // If the file doesn't appear to be already enhanced, enhance it first
+    enhancedAudioPath = await convertAudioFormat(audioFilePath, sessionId);
+    console.log(`Audio enhanced before chunking: ${enhancedAudioPath}`);
+  }
+  
   const tempDir = path.join(path.dirname(audioFilePath), 'temp_chunks_' + uuidv4());
   try {
     // Create temporary directory for chunks
@@ -361,20 +307,20 @@ async function processLargeAudioFile(audioFilePath, sessionId = null) {
     }
     
     // Get audio duration using ffmpeg
-    const duration = await getAudioDuration(audioFilePath);
+    const duration = await getAudioDuration(enhancedAudioPath);
     console.log(`Audio duration: ${duration} seconds`);
     
     // Calculate optimal chunk size and number of chunks
-    // Assume 1-minute audio is roughly 1MB (this is a rough estimate and may vary)
-    // We're being extra cautious to ensure chunks are well under the limit
-    const chunkLengthSeconds = Math.floor((MAX_CHUNK_SIZE / (1024 * 1024)) * 60);
+    // Using our 15MB limit to ensure we stay well under the 25MB API limit
+    const chunkLengthSeconds = Math.floor((MAX_CHUNK_SIZE / (1024 * 1024)) * 30); // Assuming ~0.5MB per minute is safer
     const totalChunks = Math.ceil(duration / chunkLengthSeconds);
     
     if (sessionId) {
       global.emitProcessingUpdate(sessionId, 'chunking_info', {
         message: `Splitting into ${totalChunks} chunks for processing...`,
         totalChunks: totalChunks,
-        estimatedDuration: duration
+        estimatedDuration: duration,
+        chunkSizeLimit: `${(MAX_CHUNK_SIZE / (1024 * 1024)).toFixed(1)}MB`
       });
     }
     
@@ -388,14 +334,22 @@ async function processLargeAudioFile(audioFilePath, sessionId = null) {
       
       if (sessionId) {
         global.emitProcessingUpdate(sessionId, 'creating_chunk', {
-          message: `Creating and enhancing chunk ${i+1} of ${totalChunks}...`,
+          message: `Creating chunk ${i+1} of ${totalChunks}...`,
           currentChunk: i+1,
           totalChunks: totalChunks
         });
       }
       
-      // Create and enhance audio quality in one step
-      await createAudioChunk(audioFilePath, chunkPath, startTime, chunkLengthSeconds);
+      // Create chunk from already enhanced audio
+      await createAudioChunk(enhancedAudioPath, chunkPath, startTime, chunkLengthSeconds);
+      
+      // Verify the chunk size is within limits
+      const chunkStats = fs.statSync(chunkPath);
+      if (chunkStats.size > MAX_CHUNK_SIZE) {
+        console.warn(`Warning: Chunk ${i+1} size (${chunkStats.size} bytes) is larger than expected. ` +
+                    `It may still work if under the API limit of 25MB.`);
+      }
+      
       chunkFiles.push(chunkPath);
     }
     
@@ -404,7 +358,7 @@ async function processLargeAudioFile(audioFilePath, sessionId = null) {
     for (let i = 0; i < chunkFiles.length; i++) {
       if (sessionId) {
         global.emitProcessingUpdate(sessionId, 'processing_chunk', {
-          message: `Transcribing enhanced chunk ${i+1} of ${totalChunks}...`,
+          message: `Transcribing chunk ${i+1} of ${totalChunks}...`,
           currentChunk: i+1,
           totalChunks: totalChunks
         });
@@ -472,7 +426,7 @@ async function processLargeAudioFile(audioFilePath, sessionId = null) {
       
       if (sessionId) {
         global.emitProcessingUpdate(sessionId, 'chunk_completed', {
-          message: `Enhanced chunk ${i+1} processed successfully (${chunkTranscription.length} characters)`,
+          message: `Chunk ${i+1} processed successfully (${chunkTranscription.length} characters)`,
           currentChunk: i+1,
           totalChunks: totalChunks,
           progress: Math.round(((i+1) / totalChunks) * 100)
@@ -651,11 +605,10 @@ async function extractStructuredInsights(transcript, userCustomInstructions = ''
  * Generate a Word document with the analysis results
  * @param {string} transcript - Transcript text
  * @param {string} structuredInsights - Structured insights text
- * @param {string} outputPath - Path to save the document
  * @param {string} meetingTopic - Optional meeting topic for the report header
- * @returns {Promise<void>}
+ * @returns {Promise<{reportPath: string, reportFileName: string}>} - Object containing the report path and file name
  */
-async function generateReport(transcript, structuredInsights, outputPath, meetingTopic = '') {
+async function generateReport(transcript, structuredInsights, meetingTopic = '') {
   try {
     // Get report title with topic if available
     let reportTitle = "Meeting Analysis Report";
@@ -733,7 +686,11 @@ async function generateReport(transcript, structuredInsights, outputPath, meetin
 
     // Use Packer to save the document
     const buffer = await Packer.toBuffer(doc);
-    fs.writeFileSync(outputPath, buffer);
+    const reportFileName = `meeting_analysis_report_${Date.now()}.docx`;
+    const reportPath = path.join(__dirname, 'uploads', reportFileName);
+    fs.writeFileSync(reportPath, buffer);
+
+    return { reportPath, reportFileName };
   } catch (error) {
     console.error('Error generating report:', error);
     throw new Error('Failed to generate report document');
