@@ -634,60 +634,7 @@ async function generateReport(transcript, structuredInsights, meetingTopic = '')
       const topicLabel = meetingTopic.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
       reportTitle = `${topicLabel} Meeting Analysis Report`;
     }
-    
-    // Define document styles for consistency
-    const styles = {
-      title: {
-        heading: HeadingLevel.HEADING_1,
-        alignment: AlignmentType.CENTER,
-        size: 32,
-        bold: true,
-        color: "2B579A"
-      },
-      heading1: {
-        heading: HeadingLevel.HEADING_1,
-        size: 28,
-        bold: true,
-        color: "2B579A",
-        spacing: {
-          before: 400,
-          after: 120
-        }
-      },
-      heading2: {
-        heading: HeadingLevel.HEADING_2,
-        size: 24,
-        bold: true,
-        color: "4A86E8",
-        spacing: {
-          before: 300,
-          after: 120
-        }
-      },
-      heading3: {
-        heading: HeadingLevel.HEADING_3,
-        size: 20,
-        bold: true,
-        color: "4A86E8",
-        spacing: {
-          before: 200,
-          after: 80
-        }
-      },
-      normal: {
-        size: 11,
-        font: "Calibri",
-        spacing: {
-          line: 276
-        }
-      },
-      metadata: {
-        size: 10,
-        color: "666666",
-        italics: true
-      }
-    };
-    
+
     // Create sections array with content
     const children = [];
     
@@ -1024,8 +971,8 @@ async function generateReport(transcript, structuredInsights, meetingTopic = '')
         pageBreakBefore: true
       })
     );
-    
-    // Add structured insights section
+
+    // Add insights sections - IMPROVED PARSING LOGIC
     children.push(
       new Paragraph({
         text: "Key Insights",
@@ -1041,91 +988,116 @@ async function generateReport(transcript, structuredInsights, meetingTopic = '')
         ]
       })
     );
-    
-    // Process and format the structured insights with better styling
+
+    // More robust section parsing
+    const sections = [];
     let currentSection = "";
-    let currentSectionData = [];
-    let sectionTitle = "";
-    let insightSections = {};
+    let currentContent = [];
+    let evaluationSection = null;
+
+    // First, separate the content into sections
+    const lines = structuredInsights.split('\n');
     
-    // First pass - collect all sections and their contents
-    structuredInsights.split('\n').forEach(line => {
-      // Check if this is a section header (starts with "- " and contains ":")
-      if (line.trim().startsWith("- ") && line.trim().includes(":")) {
-        // If we were already processing a section, store it
-        if (currentSection && currentSectionData.length > 0) {
-          insightSections[currentSection] = {
-            title: sectionTitle,
-            content: [...currentSectionData]
-          };
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      
+      // Check for section headers (starting with "- " followed by text and a colon)
+      if (line.match(/^- [^:]+:/)) {
+        // If we were already collecting a section, save it
+        if (currentSection) {
+          // Special handling for evaluation section
+          if (currentSection.toLowerCase().includes("evaluation by guider")) {
+            evaluationSection = {
+              title: currentSection,
+              content: [...currentContent]
+            };
+          } else {
+            sections.push({
+              title: currentSection,
+              content: [...currentContent]
+            });
+          }
         }
         
         // Start a new section
-        sectionTitle = line.trim();
-        currentSection = line.trim().substring(2).split(":")[0].toLowerCase();
-        currentSectionData = [];
-      } else if (line.trim() !== "") {
-        // Add this line to the current section's content
-        currentSectionData.push(line.trim());
+        currentSection = line;
+        currentContent = [];
+      } 
+      // Add non-empty lines to current section
+      else if (line.length > 0) {
+        currentContent.push(line);
       }
-    });
-    
-    // Store the last section if needed
-    if (currentSection && currentSectionData.length > 0) {
-      insightSections[currentSection] = {
-        title: sectionTitle,
-        content: [...currentSectionData]
-      };
     }
     
-    // Process each section with appropriate formatting
-    for (const [sectionKey, section] of Object.entries(insightSections)) {
-      // Skip empty sections
-      if (section.content.length === 0) continue;
-      
-      let heading = section.title.substring(2); // Remove the "- " prefix
-      if (sectionKey === "evaluation by guider") {
-        children.push(
-          new Paragraph({
-            text: "Meeting Evaluation by Guider",
-            heading: HeadingLevel.HEADING_2,
-            pageBreakBefore: true,
-            children: [
-              new TextRun({
-                text: "Meeting Evaluation by Guider",
-                bold: true,
-                size: 24,
-                color: "4A86E8",
-                font: "Calibri"
-              })
-            ]
-          })
-        );
+    // Don't forget to add the last section
+    if (currentSection) {
+      if (currentSection.toLowerCase().includes("evaluation by guider")) {
+        evaluationSection = {
+          title: currentSection,
+          content: [...currentContent]
+        };
       } else {
+        sections.push({
+          title: currentSection,
+          content: [...currentContent]
+        });
+      }
+    }
+
+    // Process regular insight sections first
+    for (const section of sections) {
+      // Extract section title without the "- " prefix
+      const sectionTitle = section.title.substring(2);
+      
+      // Add section heading
+      children.push(
+        new Paragraph({
+          text: sectionTitle,
+          heading: HeadingLevel.HEADING_2,
+          spacing: {
+            before: 240,
+            after: 120
+          },
+          children: [
+            new TextRun({
+              text: sectionTitle,
+              bold: true,
+              size: 24,
+              color: "4A86E8",
+              font: "Calibri"
+            })
+          ]
+        })
+      );
+      
+      // If there's no content in the section, add a placeholder
+      if (section.content.length === 0) {
         children.push(
           new Paragraph({
-            text: heading,
-            heading: HeadingLevel.HEADING_2,
             children: [
               new TextRun({
-                text: heading,
-                bold: true,
-                size: 24,
-                color: "4A86E8",
-                font: "Calibri"
+                text: "No information available for this section.",
+                italics: true,
+                size: 11,
+                font: "Calibri",
+                color: "888888"
               })
             ]
           })
         );
+        continue;
       }
       
-      // Special formatting for different section types
-      if (sectionKey === "action items") {
-        // Format action items with checkboxes and bold assignees
-        section.content.forEach(item => {
+      // Process content based on section type
+      const sectionKey = sectionTitle.split(':')[0].toLowerCase();
+      
+      if (sectionKey.includes("action items")) {
+        // Format action items with bullets and highlighted assignees
+        for (const item of section.content) {
           const itemText = item.replace(/^-\s*/, '').trim();
-          // Look for assignee names in parentheses or after "assigned to" or similar
-          const assigneeMatch = itemText.match(/\(([^)]+)\)$/) || itemText.match(/\bassigned to\s+([^,\.]+)/i) || itemText.match(/\bresponsible:\s+([^,\.]+)/i);
+          const assigneeMatch = itemText.match(/\(([^)]+)\)$/) || 
+                               itemText.match(/\bassigned to\s+([^,\.]+)/i) || 
+                               itemText.match(/\bresponsible:\s+([^,\.]+)/i);
           
           if (assigneeMatch) {
             const assignee = assigneeMatch[1].trim();
@@ -1133,9 +1105,7 @@ async function generateReport(transcript, structuredInsights, meetingTopic = '')
             
             children.push(
               new Paragraph({
-                bullet: {
-                  level: 0
-                },
+                bullet: { level: 0 },
                 children: [
                   new TextRun({
                     text: `${taskText} - `,
@@ -1155,9 +1125,7 @@ async function generateReport(transcript, structuredInsights, meetingTopic = '')
           } else {
             children.push(
               new Paragraph({
-                bullet: {
-                  level: 0
-                },
+                bullet: { level: 0 },
                 children: [
                   new TextRun({
                     text: itemText,
@@ -1168,16 +1136,21 @@ async function generateReport(transcript, structuredInsights, meetingTopic = '')
               })
             );
           }
-        });
-      } else if (sectionKey === "key discussion points") {
-        // Format discussion points as a numbered list
-        section.content.forEach((point, index) => {
-          const pointText = point.replace(/^-\s*/, '').trim();
+        }
+      } 
+      else if (sectionKey.includes("key discussion") || sectionKey.includes("discussion points")) {
+        // Format discussion points as numbered list
+        for (let i = 0; i < section.content.length; i++) {
+          const pointText = section.content[i].replace(/^-\s*/, '').trim();
           children.push(
             new Paragraph({
               numbering: {
                 reference: "discussionPoints",
                 level: 0
+              },
+              spacing: {
+                before: 80,
+                after: 80
               },
               children: [
                 new TextRun({
@@ -1188,135 +1161,18 @@ async function generateReport(transcript, structuredInsights, meetingTopic = '')
               ]
             })
           );
-        });
-      } else if (sectionKey === "evaluation by guider") {
-        // Add special formatting for evaluation content (tables, charts, etc.)
-        // Parse the evaluation content to look for tabular data
-        let isTable = false;
-        let tableRows = [];
-        let currentTable = [];
-        
-        section.content.forEach(line => {
-          if (line.includes("|") && line.includes("-+-")) {
-            // This is a table header separator, do nothing
-            isTable = true;
-          } else if (line.includes("|") && isTable) {
-            // Process table row
-            const cells = line.split("|").map(cell => cell.trim()).filter(cell => cell.length > 0);
-            currentTable.push(cells);
-          } else if (isTable && currentTable.length > 0 && !line.includes("|")) {
-            // End of table, create and add it
-            // Process the table data and build actual table
-            if (currentTable.length > 1) {
-              const tableRows = currentTable.map((row, rowIndex) => {
-                return new TableRow({
-                  tableHeader: rowIndex === 0,
-                  children: row.map(cell => {
-                    return new TableCell({
-                      shading: rowIndex === 0 ? {
-                        fill: "4A86E8",
-                        type: ShadingType.SOLID,
-                      } : undefined,
-                      children: [
-                        new Paragraph({
-                          alignment: AlignmentType.CENTER,
-                          children: [
-                            new TextRun({
-                              text: cell,
-                              color: rowIndex === 0 ? "FFFFFF" : undefined,
-                              bold: rowIndex === 0,
-                              size: 11,
-                              font: "Calibri"
-                            })
-                          ]
-                        })
-                      ]
-                    });
-                  })
-                });
-              });
-              
-              children.push(
-                new Table({
-                  width: {
-                    size: 100,
-                    type: WidthType.PERCENTAGE,
-                  },
-                  borders: {
-                    top: { style: BorderStyle.SINGLE, size: 1, color: "4A86E8" },
-                    bottom: { style: BorderStyle.SINGLE, size: 1, color: "4A86E8" },
-                    left: { style: BorderStyle.SINGLE, size: 1, color: "4A86E8" },
-                    right: { style: BorderStyle.SINGLE, size: 1, color: "4A86E8" },
-                    insideHorizontal: { style: BorderStyle.SINGLE, size: 1, color: "4A86E8" },
-                    insideVertical: { style: BorderStyle.SINGLE, size: 1, color: "4A86E8" },
-                  },
-                  rows: tableRows
-                }),
-                new Paragraph({ text: "" })
-              );
-            }
-            
-            isTable = false;
-            currentTable = [];
-            // Add the non-table line
-            children.push(
-              new Paragraph({
-                children: [
-                  new TextRun({
-                    text: line,
-                    size: 11,
-                    font: "Calibri"
-                  })
-                ]
-              })
-            );
-          } else {
-            // Check for sections and format accordingly
-            if (line.match(/^[A-Z][\w\s]+:/) || line.match(/^[A-Z][\w\s]+\s*$/)) {
-              // This looks like a section header within the evaluation
-              children.push(
-                new Paragraph({
-                  text: line,
-                  heading: HeadingLevel.HEADING_3,
-                  spacing: {
-                    before: 240,
-                    after: 120
-                  },
-                  children: [
-                    new TextRun({
-                      text: line,
-                      bold: true,
-                      size: 16,
-                      color: "4F81BD",
-                      font: "Calibri"
-                    })
-                  ]
-                })
-              );
-            } else {
-              // Regular paragraph in evaluation
-              children.push(
-                new Paragraph({
-                  children: [
-                    new TextRun({
-                      text: line,
-                      size: 11,
-                      font: "Calibri"
-                    })
-                  ]
-                })
-              );
-            }
-          }
-        });
-      } else {
-        // Default formatting for other sections as bullet points
-        section.content.forEach(item => {
+        }
+      }
+      else {
+        // Default formatting for other sections (e.g., Requests, Decisions/Outcomes)
+        for (const item of section.content) {
           const itemText = item.replace(/^-\s*/, '').trim();
           children.push(
             new Paragraph({
-              bullet: {
-                level: 0
+              bullet: { level: 0 },
+              spacing: {
+                before: 80,
+                after: 80
               },
               children: [
                 new TextRun({
@@ -1327,18 +1183,334 @@ async function generateReport(transcript, structuredInsights, meetingTopic = '')
               ]
             })
           );
-        });
+        }
       }
       
       // Add spacing after each section
       children.push(
         new Paragraph({
           text: "",
-          spacing: {
-            after: 240
-          }
+          spacing: { after: 240 }
         })
       );
+    }
+
+    // Add evaluation section on a new page if it exists
+    if (evaluationSection) {
+      children.push(
+        new Paragraph({
+          text: "",
+          pageBreakBefore: true
+        }),
+        new Paragraph({
+          text: "Meeting Evaluation by Guider",
+          heading: HeadingLevel.HEADING_1,
+          spacing: {
+            before: 240,
+            after: 120
+          },
+          children: [
+            new TextRun({
+              text: "Meeting Evaluation by Guider",
+              bold: true,
+              size: 28,
+              color: "2B579A",
+              font: "Calibri"
+            })
+          ]
+        })
+      );
+      
+      // Check if evaluation content is empty
+      if (evaluationSection.content.length === 0) {
+        children.push(
+          new Paragraph({
+            children: [
+              new TextRun({
+                text: "No evaluation data available.",
+                italics: true,
+                size: 11,
+                font: "Calibri",
+                color: "888888"
+              })
+            ]
+          })
+        );
+      } else {
+        // Process evaluation content with better table detection
+        let currentEvalText = [];
+        let inTable = false;
+        let tableData = [];
+        let tableRow = [];
+        
+        for (let i = 0; i < evaluationSection.content.length; i++) {
+          const line = evaluationSection.content[i].trim();
+          
+          // Check if line contains table-like structure (has multiple | characters)
+          const isTableRow = (line.split('|').length > 2);
+          
+          // Check if line is a table header separator
+          const isTableSeparator = line.includes('-+-') || 
+                                 (line.includes('-') && line.includes('|') && !line.match(/[a-zA-Z]/));
+          
+          // Handle table detection
+          if ((isTableRow || isTableSeparator) && !inTable) {
+            // Starting a new table
+            inTable = true;
+            
+            // Add any accumulated text before the table
+            if (currentEvalText.length > 0) {
+              for (const textLine of currentEvalText) {
+                children.push(
+                  new Paragraph({
+                    children: [
+                      new TextRun({
+                        text: textLine,
+                        size: 11,
+                        font: "Calibri"
+                      })
+                    ]
+                  })
+                );
+              }
+              currentEvalText = [];
+            }
+            
+            // Start collecting table rows
+            tableData = [];
+            if (isTableRow && !isTableSeparator) {
+              // Add this line as first row of the table
+              tableRow = line.split('|')
+                           .map(cell => cell.trim())
+                           .filter(cell => cell.length > 0);
+              tableData.push(tableRow);
+            }
+          }
+          else if (inTable && isTableRow) {
+            // Continue collecting table rows
+            tableRow = line.split('|')
+                         .map(cell => cell.trim())
+                         .filter(cell => cell.length > 0);
+            tableData.push(tableRow);
+          }
+          else if (inTable && !isTableRow && !isTableSeparator) {
+            // End of table detected
+            inTable = false;
+            
+            // Create and add the table if we collected rows
+            if (tableData.length > 0) {
+              try {
+                // Create table rows for the Word document
+                const tableRows = tableData.map((rowData, rowIndex) => {
+                  return new TableRow({
+                    tableHeader: rowIndex === 0,
+                    children: rowData.map(cellText => {
+                      return new TableCell({
+                        shading: rowIndex === 0 ? {
+                          fill: "4A86E8",
+                          type: ShadingType.SOLID,
+                        } : undefined,
+                        children: [
+                          new Paragraph({
+                            alignment: AlignmentType.CENTER,
+                            children: [
+                              new TextRun({
+                                text: cellText,
+                                color: rowIndex === 0 ? "FFFFFF" : undefined,
+                                bold: rowIndex === 0,
+                                size: 11,
+                                font: "Calibri"
+                              })
+                            ]
+                          })
+                        ]
+                      });
+                    })
+                  });
+                });
+                
+                // Add table to document
+                children.push(
+                  new Table({
+                    width: {
+                      size: 100,
+                      type: WidthType.PERCENTAGE,
+                    },
+                    borders: {
+                      top: { style: BorderStyle.SINGLE, size: 1, color: "4A86E8" },
+                      bottom: { style: BorderStyle.SINGLE, size: 1, color: "4A86E8" },
+                      left: { style: BorderStyle.SINGLE, size: 1, color: "4A86E8" },
+                      right: { style: BorderStyle.SINGLE, size: 1, color: "4A86E8" },
+                      insideHorizontal: { style: BorderStyle.SINGLE, size: 1, color: "4A86E8" },
+                      insideVertical: { style: BorderStyle.SINGLE, size: 1, color: "4A86E8" },
+                    },
+                    rows: tableRows
+                  }),
+                  new Paragraph({ text: "" })
+                );
+              } catch (e) {
+                console.error("Error creating table:", e);
+                // If table creation fails, add the data as text
+                for (const row of tableData) {
+                  children.push(
+                    new Paragraph({
+                      children: [
+                        new TextRun({
+                          text: row.join(" | "),
+                          size: 11,
+                          font: "Calibri"
+                        })
+                      ]
+                    })
+                  );
+                }
+              }
+            }
+            
+            // Add the current line as text
+            currentEvalText.push(line);
+          }
+          else if (!inTable) {
+            // Regular text line
+            currentEvalText.push(line);
+            
+            // Check if this is a section title (ends with colon or all caps)
+            const isSectionTitle = line.endsWith(':') || 
+                                 (line === line.toUpperCase() && line.length > 3);
+            
+            if (isSectionTitle && currentEvalText.length > 0) {
+              // Add section title with special formatting
+              children.push(
+                new Paragraph({
+                  spacing: {
+                    before: 200,
+                    after: 80
+                  },
+                  children: [
+                    new TextRun({
+                      text: line,
+                      bold: true,
+                      size: 14,
+                      color: "4A86E8",
+                      font: "Calibri"
+                    })
+                  ]
+                })
+              );
+              currentEvalText = [];
+            }
+            // Check if we've accumulated several regular text lines
+            else if (currentEvalText.length >= 3 || 
+                   (i === evaluationSection.content.length - 1 && currentEvalText.length > 0)) {
+              // Add accumulated text
+              for (const textLine of currentEvalText) {
+                // Skip if this was already added as a section title
+                if (textLine === line && isSectionTitle) continue;
+                
+                children.push(
+                  new Paragraph({
+                    spacing: {
+                      before: 80,
+                      after: 80
+                    },
+                    children: [
+                      new TextRun({
+                        text: textLine,
+                        size: 11,
+                        font: "Calibri"
+                      })
+                    ]
+                  })
+                );
+              }
+              currentEvalText = [];
+            }
+          }
+        }
+        
+        // Add any remaining text
+        if (currentEvalText.length > 0) {
+          for (const textLine of currentEvalText) {
+            children.push(
+              new Paragraph({
+                children: [
+                  new TextRun({
+                    text: textLine,
+                    size: 11,
+                    font: "Calibri"
+                  })
+                ]
+              })
+            );
+          }
+        }
+        
+        // If we ended while still in a table, add the table
+        if (inTable && tableData.length > 0) {
+          try {
+            const tableRows = tableData.map((rowData, rowIndex) => {
+              return new TableRow({
+                tableHeader: rowIndex === 0,
+                children: rowData.map(cellText => {
+                  return new TableCell({
+                    shading: rowIndex === 0 ? {
+                      fill: "4A86E8",
+                      type: ShadingType.SOLID,
+                    } : undefined,
+                    children: [
+                      new Paragraph({
+                        alignment: AlignmentType.CENTER,
+                        children: [
+                          new TextRun({
+                            text: cellText,
+                            color: rowIndex === 0 ? "FFFFFF" : undefined,
+                            bold: rowIndex === 0,
+                            size: 11,
+                            font: "Calibri"
+                          })
+                        ]
+                      })
+                    ]
+                  });
+                })
+              });
+            });
+            
+            children.push(
+              new Table({
+                width: {
+                  size: 100,
+                  type: WidthType.PERCENTAGE,
+                },
+                borders: {
+                  top: { style: BorderStyle.SINGLE, size: 1, color: "4A86E8" },
+                  bottom: { style: BorderStyle.SINGLE, size: 1, color: "4A86E8" },
+                  left: { style: BorderStyle.SINGLE, size: 1, color: "4A86E8" },
+                  right: { style: BorderStyle.SINGLE, size: 1, color: "4A86E8" },
+                  insideHorizontal: { style: BorderStyle.SINGLE, size: 1, color: "4A86E8" },
+                  insideVertical: { style: BorderStyle.SINGLE, size: 1, color: "4A86E8" },
+                },
+                rows: tableRows
+              })
+            );
+          } catch (e) {
+            console.error("Error creating final table:", e);
+            for (const row of tableData) {
+              children.push(
+                new Paragraph({
+                  children: [
+                    new TextRun({
+                      text: row.join(" | "),
+                      size: 11,
+                      font: "Calibri"
+                    })
+                  ]
+                })
+              );
+            }
+          }
+        }
+      }
     }
     
     // Add transcript section at the end with a page break
@@ -1399,6 +1571,30 @@ async function generateReport(transcript, structuredInsights, meetingTopic = '')
         );
       }
     });
+    
+    // Handle single-line transcript
+    if (transcriptParagraphs.length <= 1 && transcript.includes('\n')) {
+      const lines = transcript.split('\n');
+      for (const line of lines) {
+        if (line.trim()) {
+          children.push(
+            new Paragraph({
+              spacing: {
+                before: 80,
+                after: 80
+              },
+              children: [
+                new TextRun({
+                  text: line.trim(),
+                  size: 11,
+                  font: "Calibri"
+                })
+              ]
+            })
+          );
+        }
+      }
+    }
     
     // Create document with proper structure
     const doc = new Document({
@@ -1485,6 +1681,9 @@ async function generateReport(transcript, structuredInsights, meetingTopic = '')
       ]
     });
 
+    // Log completion
+    console.log('Professional document generation completed successfully');
+
     // Use Packer to save the document
     const buffer = await Packer.toBuffer(doc);
     const reportFileName = `meeting_analysis_report_${Date.now()}.docx`;
@@ -1494,7 +1693,7 @@ async function generateReport(transcript, structuredInsights, meetingTopic = '')
     return { reportPath, reportFileName };
   } catch (error) {
     console.error('Error generating report:', error);
-    throw new Error('Failed to generate report document');
+    throw new Error(`Failed to generate report document: ${error.message}`);
   }
 }
 
