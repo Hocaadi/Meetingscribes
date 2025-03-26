@@ -509,16 +509,21 @@ async function extractStructuredInsights(transcript, userCustomInstructions = ''
     
     const systemInstructions = `
     You are a Business document AI assistant and an expert that analyzes meeting transcripts to extract structured insights.
+    You also have a special role as "Guider" - an evaluation agent that assesses meeting performance.
+    
     From the following transcript, identify:
     1. Key discussion points.
     2. Requests made.
     3. Action items and responsible people.
     4. Final decisions or outcomes.
+    5. Evaluation by Guider (when evaluation template is provided).
+    
     Format your response as:
     - Key Discussion Points:
     - Requests:
     - Action Items:
     - Decisions/Outcomes:
+    - Evaluation by Guider: (This section appears only when evaluation template is provided)
     `;
     
     // Prepare user query with transcript and any context information
@@ -533,7 +538,17 @@ async function extractStructuredInsights(transcript, userCustomInstructions = ''
     
     // Add user custom instructions if provided
     if (userCustomInstructions && userCustomInstructions.trim() !== '') {
-      userQuery += `\n\nAdditional analysis instructions: ${userCustomInstructions}`;
+      // Check if custom instructions contain evaluation template
+      if (userCustomInstructions.includes("Evaluation Template") || 
+          userCustomInstructions.includes("Meeting Performance Evaluation") || 
+          userCustomInstructions.toLowerCase().includes("evaluation criteria")) {
+        
+        // Add the evaluation instructions with clear marker for the "Guider" agent
+        userQuery += `\n\n===EVALUATION INSTRUCTIONS FOR GUIDER===\nAs the Guider evaluation agent, please use the following template to evaluate the meeting participants:\n${userCustomInstructions}\n\nThe evaluation should be included in your "Evaluation by Guider" section.`;
+      } else {
+        // Regular custom instructions
+        userQuery += `\n\nAdditional analysis instructions: ${userCustomInstructions}`;
+      }
     }
 
     let attempts = 0;
@@ -664,14 +679,55 @@ async function generateReport(transcript, structuredInsights, meetingTopic = '')
       })
     ];
     
-    // Add insights lines
+    // Check if insights contain "Evaluation by Guider" section and format it specially
+    let hasEvaluationSection = false;
+    let evaluationContent = [];
+    
+    // Add insights lines with special handling for Evaluation section
+    let currentSection = "";
     structuredInsights.split('\n').forEach(line => {
-      children.push(
-        new Paragraph({
-          text: line,
-          style: "normal"
-        })
-      );
+      // Check if this is the evaluation section header
+      if (line.trim().startsWith("- Evaluation by Guider:") || line.trim() === "- Evaluation by Guider:") {
+        hasEvaluationSection = true;
+        currentSection = "evaluation";
+        
+        // Add the evaluation header separately
+        children.push(
+          new Paragraph({
+            text: "",
+            style: "normal"
+          }),
+          new Paragraph({
+            text: "Meeting Evaluation by Guider",
+            heading: HeadingLevel.HEADING_2
+          })
+        );
+        return; // Skip adding this line as we've added our own header
+      }
+      
+      // If we're in the evaluation section, collect content for special formatting
+      if (currentSection === "evaluation") {
+        // Regular evaluation content
+        children.push(
+          new Paragraph({
+            text: line,
+            style: "normal"
+          })
+        );
+      } else {
+        // Regular insights content
+        children.push(
+          new Paragraph({
+            text: line,
+            style: "normal"
+          })
+        );
+      }
+      
+      // Check if a new section is starting
+      if (line.trim().startsWith("- ") && line.trim().includes(":")) {
+        currentSection = line.trim().substring(2).split(":")[0].toLowerCase();
+      }
     });
     
     // Create document with proper structure
