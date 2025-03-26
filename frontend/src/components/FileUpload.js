@@ -99,13 +99,7 @@ const STATUS_ICONS = {
   chunk_error: 'exclamation-square',
   // Audio enhancement status icons
   audio_enhancing: 'music-note-beamed',
-  audio_enhanced: 'filter-square',
-  info: 'info-circle',
-  warning: 'exclamation-triangle',
-  success: 'check-circle',
-  processing: 'arrow-repeat',
-  completed: 'check-circle',
-  started: 'play-circle'
+  audio_enhanced: 'filter-square'
 };
 
 // Status Colors for different processing stages
@@ -135,21 +129,7 @@ const STATUS_COLORS = {
   chunk_error: 'warning',
   // Audio enhancement status colors
   audio_enhancing: 'info',
-  audio_enhanced: 'success',
-  info: 'info',
-  warning: 'warning',
-  error: 'danger',
-  success: 'success',
-  processing: 'primary',
-  completed: 'success',
-  started: 'info'
-};
-
-const CONNECTION_STATUS = {
-  connected: { color: 'success', text: 'Connected', icon: 'wifi' },
-  disconnected: { color: 'danger', text: 'Disconnected', icon: 'wifi-off' },
-  error: { color: 'danger', text: 'Connection Error', icon: 'exclamation-triangle' },
-  connecting: { color: 'warning', text: 'Connecting...', icon: 'arrow-repeat' }
+  audio_enhanced: 'success'
 };
 
 const FileUpload = () => {
@@ -169,153 +149,79 @@ const FileUpload = () => {
   
   // WebSocket related state
   const [socket, setSocket] = useState(null);
-  const [sessionId] = useState(() => {
-    // Try to get existing session ID from localStorage
-    const existingId = localStorage.getItem('meetingScribeSessionId');
-    if (existingId) {
-      return existingId;
-    }
-    // Create new ID if none exists
-    const newId = uuidv4();
-    localStorage.setItem('meetingScribeSessionId', newId);
-    return newId;
-  });
+  const [sessionId, setSessionId] = useState('');
   const [processingUpdates, setProcessingUpdates] = useState([]);
   const [transcriptionModel, setTranscriptionModel] = useState('');
   const [analysisModel, setAnalysisModel] = useState('');
-  const [socketStatus, setSocketStatus] = useState('disconnected');
-  const reconnectAttemptsRef = useRef(0);
-  const maxReconnectAttempts = 5;
-  
-  // Inside the FileUpload component state declarations, add:
-  const [documentFormat, setDocumentFormat] = useState('docx');
   
   // Initialize WebSocket connection and session ID
   useEffect(() => {
-    const connectSocket = () => {
-      console.log('Initializing WebSocket connection with session ID:', sessionId);
-      
-      // Connect to WebSocket server
-      const socketUrl = config.API_URL || 'http://localhost:5000';
-      const newSocket = io(socketUrl, {
-        query: { sessionId },
-        reconnection: true,
-        reconnectionAttempts: maxReconnectAttempts,
-        reconnectionDelay: 1000,
-        timeout: 20000
-      });
-      
-      // Set up event listeners
-      newSocket.on('connect', () => {
-        console.log('Connected to WebSocket server with socket ID:', newSocket.id);
-        setSocketStatus('connected');
-        reconnectAttemptsRef.current = 0; // Reset counter on successful connection
-      });
-      
-      newSocket.on('processing_update', (update) => {
-        console.log('Processing update received:', update);
-        
-        // Extract model info if available
-        if (update.transcriptionModel) {
-          setTranscriptionModel(update.transcriptionModel);
-        }
-        
-        if (update.analysisModel) {
-          setAnalysisModel(update.analysisModel);
-        }
-        
-        // Auto-complete when final status is received
-        if (update.status === 'completed' || update.message === 'Processing completed successfully') {
-          setProgress(100);
-          setUploading(false);
-          setResult({
-            message: 'Processing completed successfully',
-            fileName: update.reportName || update.fileName, 
-            reportUrl: update.reportUrl || `/download/${update.reportName || update.fileName}`,
-            format: update.format || (update.reportName?.endsWith('.pdf') ? 'pdf' : 'docx'),
-            docxUrl: update.docxUrl,
-            pdfUrl: update.pdfUrl,
-            primaryUrl: update.primaryUrl
-          });
-        }
-        
-        // Handle errors
-        if (update.status === 'error') {
-          setError(update.message || 'An error occurred during processing');
-          setUploading(false);
-          setProgress(0);
-        }
-        
-        // Update progress if available
-        if (update.percentComplete && !isNaN(update.percentComplete)) {
-          // Scale to 50-100% range since upload is 0-50%
-          const scaledProgress = 50 + (update.percentComplete / 2);
-          setProgress(Math.min(99, scaledProgress)); // Cap at 99% until complete
-        }
-        
-        // Add the update to our list of updates
-        setProcessingUpdates(prev => [...prev, {
-          ...update,
-          id: Date.now()
-        }]);
-      });
-      
-      newSocket.on('disconnect', (reason) => {
-        console.log('Disconnected from WebSocket server:', reason);
-        setSocketStatus('disconnected');
-        
-        // Attempt reconnection if not already reconnecting and haven't exceeded attempts
-        if (reconnectAttemptsRef.current < maxReconnectAttempts && 
-            reason !== 'io client disconnect') {
-          reconnectAttemptsRef.current++;
-          console.log(`Attempting to reconnect (${reconnectAttemptsRef.current}/${maxReconnectAttempts})...`);
-          
-          // Manual reconnection after delay
-          setTimeout(() => {
-            if (newSocket && !newSocket.connected) {
-              console.log('Reconnecting...');
-              newSocket.connect();
-            }
-          }, 2000);
-        } else if (reconnectAttemptsRef.current >= maxReconnectAttempts) {
-          console.error('Maximum reconnection attempts reached');
-          setError(prev => prev || 'Connection lost. Please refresh the page to reconnect.');
-        }
-      });
-      
-      newSocket.on('connect_error', (error) => {
-        console.error('WebSocket connection error:', error);
-        setSocketStatus('error');
-      });
-      
-      // Save socket instance
-      setSocket(newSocket);
-      
-      // Return cleanup function
-      return () => {
-        console.log('Cleaning up socket connection');
-        if (newSocket) {
-          newSocket.disconnect();
-        }
-      };
-    };
+    // Generate a unique session ID for this client
+    const newSessionId = uuidv4();
+    setSessionId(newSessionId);
     
-    // Initialize connection
-    const cleanup = connectSocket();
+    // Connect to WebSocket server
+    const socketUrl = config.API_URL || 'http://localhost:5000';
+    const newSocket = io(socketUrl, {
+      query: { sessionId: newSessionId }
+    });
     
-    // Setup heartbeat ping every 30 seconds to keep connection alive
-    const heartbeatInterval = setInterval(() => {
-      if (socket && socket.connected) {
-        socket.emit('ping', { timestamp: new Date().toISOString() });
+    // Set up event listeners
+    newSocket.on('connect', () => {
+      console.log('Connected to WebSocket server');
+    });
+    
+    newSocket.on('processing_update', (update) => {
+      console.log('Processing update:', update);
+      
+      // Extract model info if available
+      if (update.transcriptionModel) {
+        setTranscriptionModel(update.transcriptionModel);
       }
-    }, 30000);
+      
+      if (update.analysisModel) {
+        setAnalysisModel(update.analysisModel);
+      }
+      
+      // Auto-complete when final status is received
+      if (update.status === 'completed' || update.message === 'Processing completed successfully') {
+        setProgress(100);
+        setUploading(false);
+        setResult({
+          message: 'Processing completed successfully',
+          fileName: update.reportName || update.fileName, // Handle both property names
+          reportUrl: update.reportUrl || `/download/${update.reportName || update.fileName}` // Ensure we have a URL
+        });
+      }
+      
+      // Handle errors
+      if (update.status === 'error') {
+        setError(update.message || 'An error occurred during processing');
+        setUploading(false);
+        setProgress(0);
+      }
+      
+      // Add the update to our list of updates
+      setProcessingUpdates(prev => [...prev, {
+        ...update,
+        id: Date.now()
+      }]);
+    });
+    
+    newSocket.on('disconnect', () => {
+      console.log('Disconnected from WebSocket server');
+    });
+    
+    // Save socket instance
+    setSocket(newSocket);
     
     // Clean up on component unmount
     return () => {
-      clearInterval(heartbeatInterval);
-      cleanup();
+      if (newSocket) {
+        newSocket.disconnect();
+      }
     };
-  }, [sessionId]); // Only recreate the socket if sessionId changes
+  }, []);
 
   const handleFileChange = (e) => {
     if (e.target.files && e.target.files[0]) {
@@ -421,32 +327,6 @@ const FileUpload = () => {
       setProgress(0);
       setProcessingUpdates([]); // Clear previous updates
       
-      // Check socket connection and update UI accordingly
-      const isSocketConnected = socket && socket.connected;
-      if (!isSocketConnected) {
-        console.warn('WebSocket not connected. Will use polling fallback for updates.');
-        // Add a processing update to inform user
-        setProcessingUpdates([{
-          id: Date.now(),
-          status: 'warning',
-          message: 'WebSocket connection not available. Progress updates may be delayed.',
-          timestamp: new Date().toISOString()
-        }]);
-        
-        // Try to reconnect socket
-        if (socket) {
-          socket.connect();
-        }
-      } else {
-        // Add a processing update to indicate WebSocket is working
-        setProcessingUpdates([{
-          id: Date.now(),
-          status: 'info',
-          message: 'Connected to server. Starting upload...',
-          timestamp: new Date().toISOString()
-        }]);
-      }
-      
       const formData = new FormData();
       formData.append('audioFile', file);
       
@@ -475,13 +355,7 @@ const FileUpload = () => {
       // Add session ID for WebSocket updates
       if (sessionId) {
         formData.append('sessionId', sessionId);
-        console.log('Using session ID for upload:', sessionId);
       }
-      
-      // Add format preference
-      formData.append('format', documentFormat);
-      
-      console.log('Starting file upload with WebSocket status:', socketStatus);
       
       const response = await axios.post(config.UPLOAD_ENDPOINT, formData, {
         headers: {
@@ -491,15 +365,11 @@ const FileUpload = () => {
           // Only show progress up to 50% as the processing will take the remaining time
           const percentCompleted = Math.round((progressEvent.loaded * 50) / progressEvent.total);
           setProgress(percentCompleted);
-        },
-        // Set a longer timeout for large files
-        timeout: 300000 // 5 minutes
+        }
       });
       
-      console.log('Upload completed successfully, response:', response.data);
-      
-      // If we're not receiving WebSocket updates, handle the response directly
-      if (!isSocketConnected) {
+      // If we're not receiving WebSocket updates, handle the response as before
+      if (!socket || !socket.connected) {
         // Simulate processing time (server is actually processing the file)
         let currentProgress = 50;
         const processingInterval = setInterval(() => {
@@ -511,102 +381,44 @@ const FileUpload = () => {
           }
         }, 500);
         
-        // Set result based on response
         setResult({
           message: response.data.message,
-          fileName: response.data.fileName,
-          reportUrl: response.data.reportUrl,
-          format: response.data.format || 'docx',
-          docxUrl: response.data.docxUrl,
-          pdfUrl: response.data.pdfUrl
+          fileName: response.data.fileName
         });
         
-        // Clean up interval and complete
+        // Clean up interval
         setTimeout(() => {
           clearInterval(processingInterval);
           setProgress(100);
           setUploading(false);
-        }, Math.min(60000, file.size / 1024)); // Scale with file size, max 1 minute
+        }, 20000); // 20 seconds max for processing simulation
       }
       
     } catch (error) {
-      console.error('Upload error:', error);
       setError(error.response?.data?.error || 'Error processing file');
       setUploading(false);
       setProgress(0);
-      
-      // Add error to processing updates
-      setProcessingUpdates(prev => [...prev, {
-        id: Date.now(),
-        status: 'error',
-        message: error.response?.data?.error || 'Error processing file',
-        details: error.message,
-        timestamp: new Date().toISOString()
-      }]);
     }
   };
 
-  const handleDownload = (format = 'primary') => {
-    if (!result) return;
-    
-    let downloadUrl;
-    let filename;
-    
-    // Log the available URLs for debugging
-    console.log('Available download URLs:', {
-      result,
-      reportUrl: result.reportUrl,
-      docxUrl: result.docxUrl,
-      pdfUrl: result.pdfUrl,
-      format: result.format,
-      requestedFormat: format
-    });
-    
-    if (format === 'primary') {
-      // Use the main report URL
-      downloadUrl = result.reportUrl;
-      filename = result.fileName || result.reportName;
-    } else if (format === 'docx' && result.docxUrl) {
-      // Use the DOCX URL if specifically requested
-      downloadUrl = result.docxUrl;
-      filename = result.docxFileName;
-    } else if (format === 'pdf' && result.pdfUrl) {
-      // Use the PDF URL if specifically requested
-      downloadUrl = result.pdfUrl;
-      filename = result.pdfFileName;
-    } else {
-      // Fallback to the main report URL
-      downloadUrl = result.reportUrl;
-      filename = result.fileName || result.reportName;
+  const handleDownload = async () => {
+    if (!result || (!result.fileName && !result.reportUrl)) {
+      setError('No file available for download');
+      return;
     }
     
-    // Ensure URL starts with API path if it's a relative URL
-    if (downloadUrl && !downloadUrl.startsWith('http')) {
-      const apiBase = `${window.location.protocol}//${window.location.host}`;
-      // Ensure URL starts with slash
-      if (!downloadUrl.startsWith('/')) {
-        downloadUrl = '/' + downloadUrl;
-      }
-      downloadUrl = apiBase + downloadUrl;
-    }
-    
-    console.log(`Initiating download for ${format} format: ${downloadUrl}`);
-    
-    if (downloadUrl) {
-      try {
-        // Create a direct download link instead of opening in a new window
-        const link = document.createElement('a');
-        link.href = downloadUrl;
-        link.setAttribute('download', filename || 'meeting_report');
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-      } catch (error) {
-        console.error('Download error:', error);
-        setError('Error initiating download. Please try again.');
-      }
-    } else {
-      setError(`No download URL available for ${format} format`);
+    try {
+      // Use the reportUrl directly if available, otherwise construct it
+      const downloadUrl = result.reportUrl || `${config.API_URL}/api/download/${result.fileName}`;
+      
+      const response = await axios.get(downloadUrl, {
+        responseType: 'blob'
+      });
+      
+      saveAs(response.data, result.fileName);
+    } catch (error) {
+      setError('Error downloading file: ' + (error.message || 'Unknown error'));
+      console.error('Download error:', error);
     }
   };
 
@@ -700,32 +512,6 @@ const FileUpload = () => {
                   </Form.Group>
                 </Card.Body>
               </Card>
-              
-              {/* Document Format Selection */}
-              <Form.Group className="mb-3">
-                <Form.Label>Document Format</Form.Label>
-                <div className="d-flex">
-                  <Form.Check
-                    type="radio"
-                    id="format-docx"
-                    name="documentFormat"
-                    label="Word Document (DOCX)"
-                    className="me-3"
-                    checked={documentFormat === 'docx'}
-                    onChange={() => setDocumentFormat('docx')}
-                    disabled={uploading}
-                  />
-                  <Form.Check
-                    type="radio"
-                    id="format-pdf"
-                    name="documentFormat" 
-                    label="PDF Document"
-                    checked={documentFormat === 'pdf'}
-                    onChange={() => setDocumentFormat('pdf')}
-                    disabled={uploading}
-                  />
-                </div>
-              </Form.Group>
               
               <Card className="mt-3 custom-instructions-card">
                 <Card.Header 
@@ -838,14 +624,6 @@ const FileUpload = () => {
                     : 'Processing your audio file...'}
                 </h4>
                 
-                {/* WebSocket connection status indicator */}
-                <div className="socket-status text-center mb-2">
-                  <span className={`badge bg-${CONNECTION_STATUS[socketStatus]?.color || 'secondary'} d-inline-flex align-items-center`}>
-                    <i className={`bi bi-${CONNECTION_STATUS[socketStatus]?.icon || 'question-circle'} me-1`}></i>
-                    {CONNECTION_STATUS[socketStatus]?.text || 'Unknown Status'}
-                  </span>
-                </div>
-                
                 {(transcriptionModel || analysisModel) && (
                   <div className="models-info text-center mb-3">
                     {transcriptionModel && (
@@ -893,32 +671,6 @@ const FileUpload = () => {
               <p className="text-muted small text-center">
                 This may take a few minutes depending on the audio length
               </p>
-              
-              {/* Connection recovery button */}
-              {socketStatus !== 'connected' && (
-                <div className="text-center mt-3">
-                  <Button 
-                    variant="outline-primary" 
-                    size="sm"
-                    onClick={() => {
-                      if (socket) {
-                        setSocketStatus('connecting');
-                        socket.connect();
-                        
-                        // Add a status update
-                        setProcessingUpdates(prev => [...prev, {
-                          id: Date.now(),
-                          status: 'info',
-                          message: 'Attempting to reconnect to server...',
-                          timestamp: new Date().toISOString()
-                        }]);
-                      }
-                    }}
-                  >
-                    <i className="bi bi-arrow-repeat me-1"></i> Reconnect
-                  </Button>
-                </div>
-              )}
             </div>
           )}
           
@@ -941,63 +693,13 @@ const FileUpload = () => {
                 )}
               </div>
               
-              <div className="d-flex flex-column align-items-center mt-4">
-                <div className="mb-3">
-                  {/* Main Download Button */}
-                  <Button 
-                    variant="primary" 
-                    onClick={() => handleDownload('primary')}
-                    className="mb-2 d-block"
-                    style={{ minWidth: '220px' }}
-                  >
-                    <i className={`bi ${(result.format === 'pdf') ? 'bi-file-earmark-pdf' : 'bi-file-earmark-word'} me-2`}></i>
-                    Download Report ({(result.format || 'DOCX').toUpperCase()})
-                  </Button>
-                  
-                  {/* Alternative Format Download Buttons */}
-                  {result.format === 'pdf' && result.docxUrl && (
-                    <Button 
-                      variant="outline-secondary" 
-                      onClick={() => handleDownload('docx')}
-                      size="sm"
-                      className="d-block mt-2"
-                      style={{ minWidth: '220px' }}
-                    >
-                      <i className="bi bi-file-earmark-word me-2"></i>
-                      Download as DOCX
-                    </Button>
-                  )}
-                  
-                  {result.format === 'docx' && result.pdfUrl && (
-                    <Button 
-                      variant="outline-secondary" 
-                      onClick={() => handleDownload('pdf')}
-                      size="sm"
-                      className="d-block mt-2"
-                      style={{ minWidth: '220px' }}
-                    >
-                      <i className="bi bi-file-earmark-pdf me-2"></i>
-                      Download as PDF
-                    </Button>
-                  )}
-                  
-                  {/* PDF Error Message */}
-                  {result.pdfError && (
-                    <Alert variant="warning" className="mt-2 text-start" style={{ fontSize: '0.85rem' }}>
-                      <i className="bi bi-exclamation-triangle me-2"></i>
-                      PDF generation encountered an issue. Only DOCX is available.
-                    </Alert>
-                  )}
-                </div>
-                
-                <Button 
-                  variant="outline-secondary" 
-                  className="mt-3" 
-                  onClick={handleReset}
-                  style={{ minWidth: '220px' }}
-                >
-                  <i className="bi bi-arrow-repeat me-2"></i>
+              <div className="d-flex justify-content-center mt-4">
+                <Button variant="outline-secondary" className="me-3" onClick={handleReset}>
                   Process Another File
+                </Button>
+                <Button variant="primary" onClick={handleDownload}>
+                  <i className="bi bi-download me-2"></i>
+                  Download Report
                 </Button>
               </div>
             </div>
