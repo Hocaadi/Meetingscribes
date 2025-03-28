@@ -6,6 +6,7 @@ import config from '../config';
 import 'bootstrap-icons/font/bootstrap-icons.css';
 import { io } from 'socket.io-client';
 import { v4 as uuidv4 } from 'uuid';
+import TranscriptChat from './TranscriptChat';
 
 // Meeting topics options
 const MEETING_TOPICS = [
@@ -190,6 +191,10 @@ const FileUpload = () => {
   // Inside the FileUpload component state declarations, add:
   const [documentFormat, setDocumentFormat] = useState('docx');
   
+  // Add transcript state to store the transcript text
+  const [transcript, setTranscript] = useState('');
+  const [showChat, setShowChat] = useState(false);
+  
   // Initialize WebSocket connection and session ID
   useEffect(() => {
     const connectSocket = () => {
@@ -224,6 +229,11 @@ const FileUpload = () => {
           setAnalysisModel(update.analysisModel);
         }
         
+        // Save transcript if it's included in the update
+        if (update.transcript) {
+          setTranscript(update.transcript);
+        }
+        
         // Auto-complete when final status is received
         if (update.status === 'completed' || update.message === 'Processing completed successfully') {
           setProgress(100);
@@ -235,7 +245,8 @@ const FileUpload = () => {
             format: update.format || (update.reportName?.endsWith('.pdf') ? 'pdf' : 'docx'),
             docxUrl: update.docxUrl,
             pdfUrl: update.pdfUrl,
-            primaryUrl: update.primaryUrl
+            primaryUrl: update.primaryUrl,
+            transcript: update.transcript
           });
         }
         
@@ -632,6 +643,11 @@ const FileUpload = () => {
     setShowCustomInstructions(!showCustomInstructions);
   };
 
+  // Add a handler to toggle the chat interface
+  const toggleChat = () => {
+    setShowChat(!showChat);
+  };
+
   return (
     <Container className="upload-container">
       <Row className="justify-content-center">
@@ -923,8 +939,8 @@ const FileUpload = () => {
           )}
           
           {result && (
-            <div className="results-container text-center">
-              <div className="mb-4">
+            <div className="results-container">
+              <div className="text-center mb-4">
                 <i className="bi bi-check-circle-fill" style={{ fontSize: '3rem', color: '#28a745' }}></i>
                 <h3 className="mt-3">Processing Complete!</h3>
                 <p>Your audio has been successfully transcribed and analyzed.</p>
@@ -988,7 +1004,26 @@ const FileUpload = () => {
                       PDF generation encountered an issue. Only DOCX is available.
                     </Alert>
                   )}
+                  
+                  {/* Chat with Transcript button */}
+                  <Button 
+                    variant={showChat ? "success" : "outline-primary"}
+                    onClick={toggleChat}
+                    className="d-block mt-3"
+                    style={{ minWidth: '220px' }}
+                  >
+                    <i className={`bi bi-chat-dots me-2`}></i>
+                    {showChat ? 'Hide Chat Assistant' : 'Chat with Transcript'}
+                  </Button>
                 </div>
+                
+                {/* Show the chat component when showChat is true */}
+                {showChat && transcript && (
+                  <TranscriptChat 
+                    transcript={transcript || result?.transcript || ''}
+                    sessionId={sessionId}
+                  />
+                )}
                 
                 <Button 
                   variant="outline-secondary" 

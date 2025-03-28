@@ -43,7 +43,17 @@ io.on('connection', (socket) => {
 
 // Create global emitter function to use throughout the application
 global.emitProcessingUpdate = (sessionId, status, data = {}) => {
-  io.to(sessionId).emit('processing_update', { status, ...data, timestamp: new Date().toISOString() });
+  if (!sessionId) {
+    console.log('No sessionId provided for emitProcessingUpdate, skipping');
+    return false;
+  }
+  
+  try {
+    io.to(sessionId).emit('processing_update', { status, ...data, timestamp: new Date().toISOString() });
+  } catch (error) {
+    console.error('Error in emitProcessingUpdate:', error);
+    return false;
+  }
 };
 
 // Configure CORS for production/development environments
@@ -197,6 +207,60 @@ app.get('/test-upload', (req, res) => {
 // Health check endpoint for monitoring
 app.get('/api/health', (req, res) => {
   res.status(200).json({ status: 'ok', message: 'MeetingScribe API is running' });
+});
+
+// Chat API endpoint for transcript questions
+app.post('/api/chat', async (req, res) => {
+  try {
+    const { message, sessionId, transcript } = req.body;
+    
+    if (!message) {
+      return res.status(400).json({ error: 'No message provided' });
+    }
+    
+    // Log the incoming chat request
+    console.log(`Chat request from session ${sessionId}: ${message.substring(0, 100)}${message.length > 100 ? '...' : ''}`);
+    
+    // Use OpenAI to generate a response about the transcript
+    const openai = new (require('openai').OpenAI)({
+      apiKey: process.env.OPENAI_API_KEY,
+    });
+    
+    // Use a truncated version of the transcript if it's too long
+    const maxTranscriptLength = 8000; // Characters
+    let transcriptContent = transcript || '';
+    if (transcriptContent.length > maxTranscriptLength) {
+      transcriptContent = transcriptContent.substring(0, maxTranscriptLength) + '... [Transcript truncated due to length]';
+    }
+    
+    const chatCompletion = await openai.chat.completions.create({
+      model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'system',
+          content: `You are a helpful assistant that can answer questions about meeting transcripts. 
+          The user has just had their meeting audio processed and now wants to discuss it.
+          Base all your responses on the meeting transcript information.
+          Be concise, helpful, and focus only on information that exists in the transcript.
+          If asked about something that isn't in the transcript, politely explain that you can only discuss content from this specific meeting.`
+        },
+        {
+          role: 'user',
+          content: `This is my meeting transcript: \n\n${transcriptContent}\n\nNow I want to ask you about it: ${message}`
+        }
+      ],
+      temperature: 0.7,
+      max_tokens: 1000
+    });
+    
+    const response = chatCompletion.choices[0].message.content;
+    console.log(`Generated chat response for session ${sessionId}`);
+    
+    return res.status(200).json({ response });
+  } catch (error) {
+    console.error('Error in chat endpoint:', error);
+    return res.status(500).json({ error: 'Error generating response', details: error.message });
+  }
 });
 
 // Serve React frontend in production
