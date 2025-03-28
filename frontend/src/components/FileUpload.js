@@ -950,4 +950,63 @@ const FileUpload = () => {
                   <ListGroup variant="flush" className="processing-updates-list" style={{ maxHeight: '250px', overflowY: 'auto' }}>
                     {processingUpdates.map(update => (
                       <ListGroup.Item key={update.id} className="d-flex align-items-center">
-                        <div className={`
+                        <div className={`update-status-icon me-2 ${update.status === 'error' ? 'text-danger' : 'text-success'}`}>
+                          <i className={`bi ${update.status === 'error' ? 'bi-exclamation-circle' : 'bi-check-circle'}`}></i>
+                        </div>
+                        <div className="update-content flex-grow-1">
+                          <div className="update-message">{update.message}</div>
+                          <div className="update-timestamp text-muted small">
+                            {new Date(update.timestamp).toLocaleTimeString()}
+                          </div>
+                        </div>
+                      </ListGroup.Item>
+                    ))}
+                  </ListGroup>
+                </Card>
+              )}
+              
+              <Alert variant="info">
+                <i className="bi bi-info-circle me-2"></i>
+                This process may take a few minutes depending on the length of your audio file.
+              </Alert>
+              
+              {socketStatus !== 'connected' && (
+                <div className="text-center mt-3">
+                  <Button 
+                    variant="outline-warning" 
+                    size="sm"
+                    onClick={() => {
+                      setSocketStatus('connecting');
+                      connectSocket();
+                      setProcessingUpdates(prev => [
+                        ...prev,
+                        {
+                          id: Date.now(),
+                          message: 'Attempting to reconnect to server...',
+                          status: 'info',
+                          timestamp: new Date().toISOString()
+                        }
+                      ]);
+                    }}
+                  >
+                    <i className="bi bi-arrow-repeat me-1"></i>
+                    Reconnect to Server
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
+          
+          {/* Result Section */}
+          {result && (
+            <div className="result-container">
+              {/* Success content here */}
+            </div>
+          )}
+        </Col>
+      </Row>
+    </Container>
+  );
+};
+
+export default FileUpload;
