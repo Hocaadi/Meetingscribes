@@ -558,7 +558,7 @@ const FileUpload = () => {
     let filename;
     
     // Log the available URLs for debugging
-    console.log('Available download URLs:', {
+    console.log('Available download URLs:', { 
       result,
       reportUrl: result.reportUrl,
       docxUrl: result.docxUrl,
@@ -606,6 +606,15 @@ const FileUpload = () => {
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
+        
+        // Ensure the result object has the proper document name for QA feature
+        if (filename) {
+          console.log(`Setting document name for QA: ${filename}`);
+          setResult(prevResult => ({
+            ...prevResult,
+            documentName: filename
+          }));
+        }
       } catch (error) {
         console.error('Download error:', error);
         setError('Error initiating download. Please try again.');
@@ -637,29 +646,42 @@ const FileUpload = () => {
     setShowCustomInstructions(!showCustomInstructions);
   };
 
-  // Add new function to handle question submission
+  // Add a fix for the handleAskQuestion function
   const handleAskQuestion = async () => {
-    if (!question.trim() || !result || !result.reportName) {
-      setError('Please enter a question and ensure a document has been generated.');
+    // Check if a question is entered
+    if (!question.trim()) {
+      setError('Please enter a question to continue.');
       return;
     }
-    
+
+    // Check if document has been generated
+    if (!result) {
+      setError('Please ensure a document has been generated first.');
+      return;
+    }
+
+    // Get document name from all possible properties
+    const documentName = result.documentName || result.fileName || result.reportName || 
+                         result.docxFileName || result.pdfFileName;
+
+    if (!documentName) {
+      console.error('Cannot find document name in result:', result);
+      setError('Unable to identify the document for your question.');
+      return;
+    }
+
     try {
       setIsAskingQuestion(true);
-      
-      // Get document name from the result
-      const documentName = result.reportName || result.fileName;
-      
       console.log(`Asking question about document: ${documentName}`);
       console.log(`Question: ${question}`);
-      
+
       // Send question to backend
       const response = await axios.post(`${config.API_URL}/api/ask-question`, {
         question: question,
         documentName: documentName,
         format: result.format || 'docx'
       });
-      
+
       if (response.data && response.data.answer) {
         // Add new answer to the list, preserving previous answers
         setAnswers(prevAnswers => [
@@ -671,7 +693,7 @@ const FileUpload = () => {
           },
           ...prevAnswers
         ]);
-        
+
         // Clear the question input
         setQuestion('');
       } else {
@@ -928,211 +950,4 @@ const FileUpload = () => {
                   <ListGroup variant="flush" className="processing-updates-list" style={{ maxHeight: '250px', overflowY: 'auto' }}>
                     {processingUpdates.map(update => (
                       <ListGroup.Item key={update.id} className="d-flex align-items-center">
-                        <div className={`update-icon text-${STATUS_COLORS[update.status] || 'secondary'} me-3`}>
-                          <i className={`bi bi-${STATUS_ICONS[update.status] || 'arrow-right'}`} style={{ fontSize: '1.25rem' }}></i>
-                        </div>
-                        <div className="update-content flex-grow-1">
-                          <p className="mb-0 fw-medium">{update.message}</p>
-                          <p className="text-muted small mb-0">
-                            {new Date(update.timestamp).toLocaleTimeString()}
-                          </p>
-                        </div>
-                      </ListGroup.Item>
-                    ))}
-                  </ListGroup>
-                </Card>
-              )}
-              
-              <p className="text-muted small text-center">
-                This may take a few minutes depending on the audio length
-              </p>
-              
-              {/* Connection recovery button */}
-              {socketStatus !== 'connected' && (
-                <div className="text-center mt-3">
-                  <Button 
-                    variant="outline-primary" 
-                    size="sm"
-                    onClick={() => {
-                      if (socket) {
-                        setSocketStatus('connecting');
-                        socket.connect();
-                        
-                        // Add a status update
-                        setProcessingUpdates(prev => [...prev, {
-                          id: Date.now(),
-                          status: 'info',
-                          message: 'Attempting to reconnect to server...',
-                          timestamp: new Date().toISOString()
-                        }]);
-                      }
-                    }}
-                  >
-                    <i className="bi bi-arrow-repeat me-1"></i> Reconnect
-                  </Button>
-                </div>
-              )}
-            </div>
-          )}
-          
-          {result && (
-            <div className="results-container text-center">
-              <div className="mb-4">
-                <i className="bi bi-check-circle-fill" style={{ fontSize: '3rem', color: '#28a745' }}></i>
-                <h3 className="mt-3">Processing Complete!</h3>
-                <p>Your audio has been successfully transcribed and analyzed.</p>
-                
-                {(transcriptionModel || analysisModel) && (
-                  <div className="models-info text-center mb-3">
-                    {transcriptionModel && (
-                      <p className="mb-1"><strong>Transcription Model:</strong> {transcriptionModel}</p>
-                    )}
-                    {analysisModel && (
-                      <p className="mb-1"><strong>Analysis Model:</strong> {analysisModel}</p>
-                    )}
-                  </div>
-                )}
-              </div>
-              
-              <div className="d-flex flex-column align-items-center mt-4">
-                <div className="mb-3">
-                  {/* Main Download Button */}
-                  <Button 
-                    variant="primary" 
-                    onClick={() => handleDownload('primary')}
-                    className="mb-2 d-block"
-                    style={{ minWidth: '220px' }}
-                  >
-                    <i className={`bi ${(result.format === 'pdf') ? 'bi-file-earmark-pdf' : 'bi-file-earmark-word'} me-2`}></i>
-                    Download Report ({(result.format || 'DOCX').toUpperCase()})
-                  </Button>
-                  
-                  {/* Alternative Format Download Buttons */}
-                  {result.format === 'pdf' && result.docxUrl && (
-                    <Button 
-                      variant="outline-secondary" 
-                      onClick={() => handleDownload('docx')}
-                      size="sm"
-                      className="d-block mt-2"
-                      style={{ minWidth: '220px' }}
-                    >
-                      <i className="bi bi-file-earmark-word me-2"></i>
-                      Download as DOCX
-                    </Button>
-                  )}
-                  
-                  {result.format === 'docx' && result.pdfUrl && (
-                    <Button 
-                      variant="outline-secondary" 
-                      onClick={() => handleDownload('pdf')}
-                      size="sm"
-                      className="d-block mt-2"
-                      style={{ minWidth: '220px' }}
-                    >
-                      <i className="bi bi-file-earmark-pdf me-2"></i>
-                      Download as PDF
-                    </Button>
-                  )}
-                  
-                  {/* PDF Error Message */}
-                  {result.pdfError && (
-                    <Alert variant="warning" className="mt-2 text-start" style={{ fontSize: '0.85rem' }}>
-                      <i className="bi bi-exclamation-triangle me-2"></i>
-                      PDF generation encountered an issue. Only DOCX is available.
-                    </Alert>
-                  )}
-                </div>
-                
-                <Button 
-                  variant="outline-secondary" 
-                  className="mt-3" 
-                  onClick={handleReset}
-                  style={{ minWidth: '220px' }}
-                >
-                  <i className="bi bi-arrow-repeat me-2"></i>
-                  Process Another File
-                </Button>
-              </div>
-            </div>
-          )}
-          
-          {/* Document Q&A Section */}
-          {result && !uploading && (
-            <div className="mt-4">
-              <div className="card mt-4">
-                <div className="card-header bg-primary text-white d-flex align-items-center">
-                  <i className="bi bi-question-circle me-2"></i>
-                  <h5 className="mb-0">Ask Questions About Your Document</h5>
-                </div>
-                <div className="card-body">
-                  <p className="text-muted mb-3">
-                    Have questions about your transcribed content? Ask away and our AI will provide answers based on your document.
-                  </p>
-                  
-                  <div className="input-group mb-3">
-                    <input
-                      type="text"
-                      className="form-control"
-                      placeholder="Ask a question about your document..."
-                      value={question}
-                      onChange={(e) => setQuestion(e.target.value)}
-                      disabled={isAskingQuestion}
-                      onKeyPress={(e) => e.key === 'Enter' && handleAskQuestion()}
-                    />
-                    <button
-                      className="btn btn-primary"
-                      type="button"
-                      onClick={handleAskQuestion}
-                      disabled={isAskingQuestion || !question.trim()}
-                    >
-                      {isAskingQuestion ? (
-                        <>
-                          <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
-                          Processing...
-                        </>
-                      ) : (
-                        <>
-                          <i className="bi bi-send me-2"></i>
-                          Ask
-                        </>
-                      )}
-                    </button>
-                  </div>
-                  
-                  {/* Q&A Results */}
-                  {answers.length > 0 && (
-                    <div className="mt-4">
-                      <h6 className="mb-3">Answers:</h6>
-                      <div className="qa-container">
-                        {answers.map((item) => (
-                          <div key={item.id} className="card mb-3 border-0 shadow-sm">
-                            <div className="card-header bg-light">
-                              <div className="d-flex justify-content-between align-items-center">
-                                <span><i className="bi bi-question-circle text-primary me-2"></i> {item.question}</span>
-                                <small className="text-muted">{new Date(item.timestamp).toLocaleTimeString()}</small>
-                              </div>
-                            </div>
-                            <div className="card-body">
-                              <div className="d-flex">
-                                <i className="bi bi-robot text-success me-2 mt-1"></i>
-                                <div className="answer-text" style={{ whiteSpace: "pre-wrap" }}>
-                                  {item.answer}
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-        </Col>
-      </Row>
-    </Container>
-  );
-};
-
-export default FileUpload; 
+                        <div className={`
