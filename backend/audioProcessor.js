@@ -42,10 +42,9 @@ const openai = new OpenAI({
  * @param {string} userCustomInstructions - Optional custom instructions from the user
  * @param {string} meetingTopic - Optional meeting topic for context
  * @param {string} sessionId - Optional session ID for WebSocket updates
- * @param {string} format - Optional format for the report (default: 'docx')
  * @returns {Promise<Object>} - Object containing the transcript and structured insights
  */
-async function processAudio(filePath, userCustomInstructions = null, meetingTopic = null, sessionId = null, format = 'docx') {
+async function processAudio(filePath, userCustomInstructions = null, meetingTopic = null, sessionId = null) {
   try {
     console.log(`Processing audio file: ${filePath}`);
     
@@ -129,13 +128,7 @@ async function processAudio(filePath, userCustomInstructions = null, meetingTopi
         reportFileName,
         docxFileName: reportFileName,
         docxUrl: `/api/download/${reportFileName}`,
-        pdfPath: pdfPath || null,
-        pdfFileName: pdfFileName || null,
-        pdfUrl: pdfFileName ? `/api/download/${pdfFileName}` : null,
-        pdfError: pdfError || null,
-        primaryFileName: isPdf && pdfFileName ? pdfFileName : reportFileName,
-        primaryUrl: isPdf && pdfFileName ? `/api/download/${pdfFileName}` : `/api/download/${reportFileName}`,
-        format: isPdf && pdfFileName ? 'pdf' : 'docx',
+        format: 'docx',
         status: "completed",
         timestamp: new Date().toISOString(),
         transcript: transcript
@@ -151,9 +144,6 @@ async function processAudio(filePath, userCustomInstructions = null, meetingTopi
       reportPath,
       reportFileName,
       docxFileName: reportFileName,
-      pdfPath,
-      pdfFileName,
-      pdfError,
       transcript: transcript
     };
   } catch (error) {

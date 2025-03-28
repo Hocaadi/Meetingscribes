@@ -188,9 +188,6 @@ const FileUpload = () => {
   const reconnectAttemptsRef = useRef(0);
   const maxReconnectAttempts = 5;
   
-  // Inside the FileUpload component state declarations, add:
-  const [documentFormat, setDocumentFormat] = useState('docx');
-  
   // Add transcript state to store the transcript text
   const [transcript, setTranscript] = useState('');
   const [showChat, setShowChat] = useState(false);
@@ -489,9 +486,6 @@ const FileUpload = () => {
         console.log('Using session ID for upload:', sessionId);
       }
       
-      // Add format preference
-      formData.append('format', documentFormat);
-      
       console.log('Starting file upload with WebSocket status:', socketStatus);
       
       const response = await axios.post(config.UPLOAD_ENDPOINT, formData, {
@@ -527,9 +521,8 @@ const FileUpload = () => {
           message: response.data.message,
           fileName: response.data.fileName,
           reportUrl: response.data.reportUrl,
-          format: response.data.format || 'docx',
-          docxUrl: response.data.docxUrl,
-          pdfUrl: response.data.pdfUrl
+          format: 'docx',
+          docxUrl: response.data.docxUrl
         });
         
         // Clean up interval and complete
@@ -557,58 +550,31 @@ const FileUpload = () => {
     }
   };
 
-  const handleDownload = (format = 'primary') => {
+  const handleDownload = () => {
     if (!result) return;
     
-    let downloadUrl;
-    let filename;
+    const downloadUrl = result.reportUrl || result.docxUrl;
+    const filename = result.fileName || result.reportName || 'meeting_report.docx';
     
-    // Log the available URLs for debugging
-    console.log('Available download URLs:', {
-      result,
-      reportUrl: result.reportUrl,
-      docxUrl: result.docxUrl,
-      pdfUrl: result.pdfUrl,
-      format: result.format,
-      requestedFormat: format
-    });
-    
-    if (format === 'primary') {
-      // Use the main report URL
-      downloadUrl = result.reportUrl;
-      filename = result.fileName || result.reportName;
-    } else if (format === 'docx' && result.docxUrl) {
-      // Use the DOCX URL if specifically requested
-      downloadUrl = result.docxUrl;
-      filename = result.docxFileName;
-    } else if (format === 'pdf' && result.pdfUrl) {
-      // Use the PDF URL if specifically requested
-      downloadUrl = result.pdfUrl;
-      filename = result.pdfFileName;
-    } else {
-      // Fallback to the main report URL
-      downloadUrl = result.reportUrl;
-      filename = result.fileName || result.reportName;
-    }
+    console.log(`Initiating download: ${downloadUrl}`);
     
     // Ensure URL starts with API path if it's a relative URL
+    let finalUrl = downloadUrl;
     if (downloadUrl && !downloadUrl.startsWith('http')) {
       const apiBase = `${window.location.protocol}//${window.location.host}`;
       // Ensure URL starts with slash
       if (!downloadUrl.startsWith('/')) {
-        downloadUrl = '/' + downloadUrl;
+        finalUrl = '/' + downloadUrl;
       }
-      downloadUrl = apiBase + downloadUrl;
+      finalUrl = apiBase + finalUrl;
     }
     
-    console.log(`Initiating download for ${format} format: ${downloadUrl}`);
-    
-    if (downloadUrl) {
+    if (finalUrl) {
       try {
         // Create a direct download link instead of opening in a new window
         const link = document.createElement('a');
-        link.href = downloadUrl;
-        link.setAttribute('download', filename || 'meeting_report');
+        link.href = finalUrl;
+        link.setAttribute('download', filename);
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
@@ -617,7 +583,7 @@ const FileUpload = () => {
         setError('Error initiating download. Please try again.');
       }
     } else {
-      setError(`No download URL available for ${format} format`);
+      setError('No download URL available');
     }
   };
 
@@ -716,32 +682,6 @@ const FileUpload = () => {
                   </Form.Group>
                 </Card.Body>
               </Card>
-              
-              {/* Document Format Selection */}
-              <Form.Group className="mb-3">
-                <Form.Label>Document Format</Form.Label>
-                <div className="d-flex">
-                  <Form.Check
-                    type="radio"
-                    id="format-docx"
-                    name="documentFormat"
-                    label="Word Document (DOCX)"
-                    className="me-3"
-                    checked={documentFormat === 'docx'}
-                    onChange={() => setDocumentFormat('docx')}
-                    disabled={uploading}
-                  />
-                  <Form.Check
-                    type="radio"
-                    id="format-pdf"
-                    name="documentFormat" 
-                    label="PDF Document"
-                    checked={documentFormat === 'pdf'}
-                    onChange={() => setDocumentFormat('pdf')}
-                    disabled={uploading}
-                  />
-                </div>
-              </Form.Group>
               
               <Card className="mt-3 custom-instructions-card">
                 <Card.Header 
@@ -959,51 +899,15 @@ const FileUpload = () => {
               
               <div className="d-flex flex-column align-items-center mt-4">
                 <div className="mb-3">
-                  {/* Main Download Button */}
                   <Button 
                     variant="primary" 
-                    onClick={() => handleDownload('primary')}
+                    onClick={handleDownload}
                     className="mb-2 d-block"
                     style={{ minWidth: '220px' }}
                   >
-                    <i className={`bi ${(result.format === 'pdf') ? 'bi-file-earmark-pdf' : 'bi-file-earmark-word'} me-2`}></i>
-                    Download Report ({(result.format || 'DOCX').toUpperCase()})
+                    <i className="bi bi-file-earmark-word me-2"></i>
+                    Download Report (DOCX)
                   </Button>
-                  
-                  {/* Alternative Format Download Buttons */}
-                  {result.format === 'pdf' && result.docxUrl && (
-                    <Button 
-                      variant="outline-secondary" 
-                      onClick={() => handleDownload('docx')}
-                      size="sm"
-                      className="d-block mt-2"
-                      style={{ minWidth: '220px' }}
-                    >
-                      <i className="bi bi-file-earmark-word me-2"></i>
-                      Download as DOCX
-                    </Button>
-                  )}
-                  
-                  {result.format === 'docx' && result.pdfUrl && (
-                    <Button 
-                      variant="outline-secondary" 
-                      onClick={() => handleDownload('pdf')}
-                      size="sm"
-                      className="d-block mt-2"
-                      style={{ minWidth: '220px' }}
-                    >
-                      <i className="bi bi-file-earmark-pdf me-2"></i>
-                      Download as PDF
-                    </Button>
-                  )}
-                  
-                  {/* PDF Error Message */}
-                  {result.pdfError && (
-                    <Alert variant="warning" className="mt-2 text-start" style={{ fontSize: '0.85rem' }}>
-                      <i className="bi bi-exclamation-triangle me-2"></i>
-                      PDF generation encountered an issue. Only DOCX is available.
-                    </Alert>
-                  )}
                   
                   {/* Chat with Transcript button */}
                   <Button 
@@ -1012,7 +916,7 @@ const FileUpload = () => {
                     className="d-block mt-3"
                     style={{ minWidth: '220px' }}
                   >
-                    <i className={`bi bi-chat-dots me-2`}></i>
+                    <i className="bi bi-chat-dots me-2"></i>
                     {showChat ? 'Hide Chat Assistant' : 'Chat with Transcript'}
                   </Button>
                 </div>

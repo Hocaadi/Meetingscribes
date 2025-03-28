@@ -143,32 +143,53 @@ app.post('/api/upload', upload.single('audioFile'), async (req, res) => {
     
     // Get session ID for WebSocket updates
     const sessionId = req.body.sessionId;
+    console.log(`Session ID for WebSocket updates: ${sessionId || 'none provided'}`);
     
     // If we have a session ID, join that client to a room for updates
     if (sessionId) {
-      const sockets = await io.fetchSockets();
-      sockets.forEach(socket => {
-        if (socket.handshake.query.sessionId === sessionId) {
-          socket.join(sessionId);
-        }
-      });
+      try {
+        const sockets = await io.fetchSockets();
+        let joinedSocketCount = 0;
+        
+        sockets.forEach(socket => {
+          if (socket.handshake.query.sessionId === sessionId) {
+            socket.join(sessionId);
+            joinedSocketCount++;
+          }
+        });
+        
+        console.log(`Found ${joinedSocketCount} socket(s) for session ${sessionId} and added them to room`);
+      } catch (socketError) {
+        console.error('Error managing socket rooms:', socketError);
+        // Continue processing even if socket management fails
+      }
     }
     
     // Process the audio file
     try {
+      console.log('Starting audio processing...');
       const result = await processAudio(req.file.path, userCustomInstructions, meetingTopic, sessionId);
+      console.log('Audio processing completed successfully');
+      
+      // Return simplified response with just DOCX file info
       return res.status(200).json({ 
         message: 'File processed successfully',
         reportPath: result.reportPath,
-        fileName: result.fileName,
-        reportName: result.fileName,
-        reportUrl: `/api/download/${result.fileName}`
+        fileName: result.reportFileName,
+        reportName: result.reportFileName,
+        docxFileName: result.reportFileName,
+        docxUrl: `/api/download/${result.reportFileName}`,
+        format: 'docx',
+        reportUrl: `/api/download/${result.reportFileName}`
       });
     } catch (processingError) {
       console.error('Detailed processing error:', processingError);
       // If we have a session ID, emit error to that client
       if (sessionId) {
-        global.emitProcessingUpdate(sessionId, 'error', { message: processingError.message });
+        global.emitProcessingUpdate(sessionId, 'error', { 
+          message: processingError.message,
+          details: process.env.NODE_ENV === 'development' ? processingError.stack : undefined
+        });
       }
       
       // If there's an error in processing, still return a 500 but with more details
