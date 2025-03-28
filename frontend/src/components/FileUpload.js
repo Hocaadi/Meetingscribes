@@ -190,11 +190,6 @@ const FileUpload = () => {
   // Inside the FileUpload component state declarations, add:
   const [documentFormat, setDocumentFormat] = useState('docx');
   
-  // Add new state variables for Q&A feature
-  const [question, setQuestion] = useState('');
-  const [answers, setAnswers] = useState([]);
-  const [isAskingQuestion, setIsAskingQuestion] = useState(false);
-  
   // Initialize WebSocket connection and session ID
   useEffect(() => {
     const connectSocket = () => {
@@ -558,7 +553,7 @@ const FileUpload = () => {
     let filename;
     
     // Log the available URLs for debugging
-    console.log('Available download URLs:', { 
+    console.log('Available download URLs:', {
       result,
       reportUrl: result.reportUrl,
       docxUrl: result.docxUrl,
@@ -606,15 +601,6 @@ const FileUpload = () => {
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
-        
-        // Ensure the result object has the proper document name for QA feature
-        if (filename) {
-          console.log(`Setting document name for QA: ${filename}`);
-          setResult(prevResult => ({
-            ...prevResult,
-            documentName: filename
-          }));
-        }
       } catch (error) {
         console.error('Download error:', error);
         setError('Error initiating download. Please try again.');
@@ -644,67 +630,6 @@ const FileUpload = () => {
 
   const toggleCustomInstructions = () => {
     setShowCustomInstructions(!showCustomInstructions);
-  };
-
-  // Add a fix for the handleAskQuestion function
-  const handleAskQuestion = async () => {
-    // Check if a question is entered
-    if (!question.trim()) {
-      setError('Please enter a question to continue.');
-      return;
-    }
-
-    // Check if document has been generated
-    if (!result) {
-      setError('Please ensure a document has been generated first.');
-      return;
-    }
-
-    // Get document name from all possible properties
-    const documentName = result.documentName || result.fileName || result.reportName || 
-                         result.docxFileName || result.pdfFileName;
-
-    if (!documentName) {
-      console.error('Cannot find document name in result:', result);
-      setError('Unable to identify the document for your question.');
-      return;
-    }
-
-    try {
-      setIsAskingQuestion(true);
-      console.log(`Asking question about document: ${documentName}`);
-      console.log(`Question: ${question}`);
-
-      // Send question to backend
-      const response = await axios.post(`${config.API_URL}/api/ask-question`, {
-        question: question,
-        documentName: documentName,
-        format: result.format || 'docx'
-      });
-
-      if (response.data && response.data.answer) {
-        // Add new answer to the list, preserving previous answers
-        setAnswers(prevAnswers => [
-          {
-            id: Date.now(),
-            question: question,
-            answer: response.data.answer,
-            timestamp: new Date().toISOString()
-          },
-          ...prevAnswers
-        ]);
-
-        // Clear the question input
-        setQuestion('');
-      } else {
-        setError('Received an invalid response from the server.');
-      }
-    } catch (err) {
-      console.error('Error asking question:', err);
-      setError(`Failed to get an answer: ${err.message || 'Unknown error'}`);
-    } finally {
-      setIsAskingQuestion(false);
-    }
   };
 
   return (
@@ -950,14 +875,14 @@ const FileUpload = () => {
                   <ListGroup variant="flush" className="processing-updates-list" style={{ maxHeight: '250px', overflowY: 'auto' }}>
                     {processingUpdates.map(update => (
                       <ListGroup.Item key={update.id} className="d-flex align-items-center">
-                        <div className={`update-status-icon me-2 ${update.status === 'error' ? 'text-danger' : 'text-success'}`}>
-                          <i className={`bi ${update.status === 'error' ? 'bi-exclamation-circle' : 'bi-check-circle'}`}></i>
+                        <div className={`update-icon text-${STATUS_COLORS[update.status] || 'secondary'} me-3`}>
+                          <i className={`bi bi-${STATUS_ICONS[update.status] || 'arrow-right'}`} style={{ fontSize: '1.25rem' }}></i>
                         </div>
                         <div className="update-content flex-grow-1">
-                          <div className="update-message">{update.message}</div>
-                          <div className="update-timestamp text-muted small">
+                          <p className="mb-0 fw-medium">{update.message}</p>
+                          <p className="text-muted small mb-0">
                             {new Date(update.timestamp).toLocaleTimeString()}
-                          </div>
+                          </p>
                         </div>
                       </ListGroup.Item>
                     ))}
@@ -965,42 +890,116 @@ const FileUpload = () => {
                 </Card>
               )}
               
-              <Alert variant="info">
-                <i className="bi bi-info-circle me-2"></i>
-                This process may take a few minutes depending on the length of your audio file.
-              </Alert>
+              <p className="text-muted small text-center">
+                This may take a few minutes depending on the audio length
+              </p>
               
+              {/* Connection recovery button */}
               {socketStatus !== 'connected' && (
                 <div className="text-center mt-3">
                   <Button 
-                    variant="outline-warning" 
+                    variant="outline-primary" 
                     size="sm"
                     onClick={() => {
-                      setSocketStatus('connecting');
-                      connectSocket();
-                      setProcessingUpdates(prev => [
-                        ...prev,
-                        {
+                      if (socket) {
+                        setSocketStatus('connecting');
+                        socket.connect();
+                        
+                        // Add a status update
+                        setProcessingUpdates(prev => [...prev, {
                           id: Date.now(),
-                          message: 'Attempting to reconnect to server...',
                           status: 'info',
+                          message: 'Attempting to reconnect to server...',
                           timestamp: new Date().toISOString()
-                        }
-                      ]);
+                        }]);
+                      }
                     }}
                   >
-                    <i className="bi bi-arrow-repeat me-1"></i>
-                    Reconnect to Server
+                    <i className="bi bi-arrow-repeat me-1"></i> Reconnect
                   </Button>
                 </div>
               )}
             </div>
           )}
           
-          {/* Result Section */}
           {result && (
-            <div className="result-container">
-              {/* Success content here */}
+            <div className="results-container text-center">
+              <div className="mb-4">
+                <i className="bi bi-check-circle-fill" style={{ fontSize: '3rem', color: '#28a745' }}></i>
+                <h3 className="mt-3">Processing Complete!</h3>
+                <p>Your audio has been successfully transcribed and analyzed.</p>
+                
+                {(transcriptionModel || analysisModel) && (
+                  <div className="models-info text-center mb-3">
+                    {transcriptionModel && (
+                      <p className="mb-1"><strong>Transcription Model:</strong> {transcriptionModel}</p>
+                    )}
+                    {analysisModel && (
+                      <p className="mb-1"><strong>Analysis Model:</strong> {analysisModel}</p>
+                    )}
+                  </div>
+                )}
+              </div>
+              
+              <div className="d-flex flex-column align-items-center mt-4">
+                <div className="mb-3">
+                  {/* Main Download Button */}
+                  <Button 
+                    variant="primary" 
+                    onClick={() => handleDownload('primary')}
+                    className="mb-2 d-block"
+                    style={{ minWidth: '220px' }}
+                  >
+                    <i className={`bi ${(result.format === 'pdf') ? 'bi-file-earmark-pdf' : 'bi-file-earmark-word'} me-2`}></i>
+                    Download Report ({(result.format || 'DOCX').toUpperCase()})
+                  </Button>
+                  
+                  {/* Alternative Format Download Buttons */}
+                  {result.format === 'pdf' && result.docxUrl && (
+                    <Button 
+                      variant="outline-secondary" 
+                      onClick={() => handleDownload('docx')}
+                      size="sm"
+                      className="d-block mt-2"
+                      style={{ minWidth: '220px' }}
+                    >
+                      <i className="bi bi-file-earmark-word me-2"></i>
+                      Download as DOCX
+                    </Button>
+                  )}
+                  
+                  {result.format === 'docx' && result.pdfUrl && (
+                    <Button 
+                      variant="outline-secondary" 
+                      onClick={() => handleDownload('pdf')}
+                      size="sm"
+                      className="d-block mt-2"
+                      style={{ minWidth: '220px' }}
+                    >
+                      <i className="bi bi-file-earmark-pdf me-2"></i>
+                      Download as PDF
+                    </Button>
+                  )}
+                  
+                  {/* PDF Error Message */}
+                  {result.pdfError && (
+                    <Alert variant="warning" className="mt-2 text-start" style={{ fontSize: '0.85rem' }}>
+                      <i className="bi bi-exclamation-triangle me-2"></i>
+                      PDF generation encountered an issue. Only DOCX is available.
+                    </Alert>
+                  )}
+                </div>
+                
+                <Button 
+                  variant="outline-secondary" 
+                  className="mt-3" 
+                  onClick={handleReset}
+                  style={{ minWidth: '220px' }}
+                >
+                  <i className="bi bi-arrow-repeat me-2"></i>
+                  Process Another File
+                </Button>
+              </div>
             </div>
           )}
         </Col>
@@ -1009,4 +1008,4 @@ const FileUpload = () => {
   );
 };
 
-export default FileUpload;
+export default FileUpload; 
