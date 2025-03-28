@@ -134,6 +134,10 @@ app.post('/api/upload', upload.single('audioFile'), async (req, res) => {
       console.log(`Meeting topic selected: ${meetingTopic}`);
     }
     
+    // Get output format preference (docx or pdf)
+    const format = req.body.format || 'docx';
+    console.log(`Output format selected: ${format}`);
+    
     // Get session ID for WebSocket updates
     const sessionId = req.body.sessionId;
     
@@ -149,13 +153,26 @@ app.post('/api/upload', upload.single('audioFile'), async (req, res) => {
     
     // Process the audio file
     try {
-      const result = await processAudio(req.file.path, userCustomInstructions, meetingTopic, sessionId);
+      const result = await processAudio(req.file.path, userCustomInstructions, meetingTopic, sessionId, format);
+      
+      // Determine the primary file based on format
+      const isPdf = format === 'pdf';
+      const fileName = isPdf && result.pdfFileName ? result.pdfFileName : result.reportFileName;
+      
+      // Create a consistent response format
       return res.status(200).json({ 
         message: 'File processed successfully',
-        reportPath: result.reportPath,
-        fileName: result.fileName,
-        reportName: result.fileName,
-        reportUrl: `/api/download/${result.fileName}`
+        // Include multiple name references to ensure consistency
+        fileName: fileName,
+        reportName: result.reportFileName,
+        docxFileName: result.reportFileName,
+        pdfFileName: result.pdfFileName || null,
+        // Include URLs for all formats
+        reportUrl: `/api/download/${result.reportFileName}`,
+        docxUrl: `/api/download/${result.reportFileName}`,
+        pdfUrl: result.pdfFileName ? `/api/download/${result.pdfFileName}` : null,
+        // Include primary format info
+        format: isPdf && result.pdfFileName ? 'pdf' : 'docx',
       });
     } catch (processingError) {
       console.error('Detailed processing error:', processingError);
@@ -207,10 +224,17 @@ app.post('/api/ask-question', async (req, res) => {
   try {
     const { question, documentName, format = 'docx' } = req.body;
     
-    if (!question || !documentName) {
+    if (!question) {
       return res.status(400).json({ 
-        error: 'Missing required parameters', 
-        details: 'Both question and documentName are required'
+        error: 'Missing required parameter', 
+        details: 'Question is required'
+      });
+    }
+    
+    if (!documentName) {
+      return res.status(400).json({ 
+        error: 'Missing required parameter', 
+        details: 'Document name is required'
       });
     }
     
@@ -222,9 +246,26 @@ app.post('/api/ask-question', async (req, res) => {
     
     if (!fs.existsSync(filePath)) {
       console.error(`Document not found: ${filePath}`);
+      
+      // List available files in uploads directory to debug
+      try {
+        const uploadDir = path.join(__dirname, 'uploads');
+        console.log('Available files in uploads directory:');
+        if (fs.existsSync(uploadDir)) {
+          const files = fs.readdirSync(uploadDir);
+          files.forEach(file => {
+            console.log(`- ${file}`);
+          });
+        } else {
+          console.log('Uploads directory does not exist!');
+        }
+      } catch (dirError) {
+        console.error('Error reading uploads directory:', dirError);
+      }
+      
       return res.status(404).json({ 
         error: 'Document not found',
-        details: `The requested document ${documentName} could not be found`
+        details: `The requested document ${documentName} could not be found in the uploads directory`
       });
     }
     
