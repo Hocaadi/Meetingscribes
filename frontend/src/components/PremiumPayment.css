@@ -1,0 +1,126 @@
+.premium-page-container {
+  min-height: 100vh;
+  background: linear-gradient(135deg, #f8f9fa 0%, #e6f0ff 100%);
+  padding-top: 120px;
+  padding-bottom: 60px;
+}
+
+.premium-title {
+  color: #2563eb;
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+
+.premium-subtitle {
+  color: #64748b;
+  font-size: 1.1rem;
+}
+
+.premium-plan-card {
+  border: none;
+  border-radius: 15px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+  transition: all 0.3s ease;
+}
+
+.premium-plan-card:hover {
+  box-shadow: 0 15px 40px rgba(0, 0, 0, 0.15);
+  transform: translateY(-5px);
+}
+
+.premium-card-header {
+  background-color: #2563eb;
+  color: white;
+  border-bottom: none;
+  padding: 20px;
+  font-weight: 600;
+}
+
+.price-container {
+  text-align: center;
+  margin: 25px 0;
+}
+
+.price-currency {
+  font-size: 24px;
+  vertical-align: top;
+  position: relative;
+  top: 8px;
+  color: #333;
+}
+
+.price {
+  font-size: 60px;
+  font-weight: 700;
+  color: #2563eb;
+}
+
+.price-period {
+  color: #64748b;
+  font-size: 18px;
+}
+
+.premium-features {
+  padding-left: 0;
+  list-style-type: none;
+  margin: 30px 0;
+}
+
+.premium-features li {
+  padding: 10px 0;
+  border-bottom: 1px solid #f0f0f0;
+  color: #333;
+}
+
+.premium-features li:last-child {
+  border-bottom: none;
+}
+
+.premium-features i {
+  color: #2563eb;
+  margin-right: 10px;
+}
+
+.upgrade-button {
+  width: 100%;
+  padding: 12px;
+  font-weight: 600;
+  font-size: 18px;
+  border-radius: 8px;
+  background-color: #2563eb;
+  border-color: #2563eb;
+  transition: all 0.3s ease;
+}
+
+.upgrade-button:hover {
+  background-color: #1d4ed8;
+  border-color: #1d4ed8;
+  transform: translateY(-2px);
+  box-shadow: 0 5px 15px rgba(37, 99, 235, 0.3);
+}
+
+.premium-status-card {
+  border: none;
+  border-radius: 15px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+  padding: 20px;
+  text-align: center;
+}
+
+.premium-icon {
+  font-size: 60px;
+  color: #2563eb;
+  margin-bottom: 20px;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .premium-page-container {
+    padding-top: 80px;
+  }
+  
+  .price {
+    font-size: 50px;
+  }
+} 

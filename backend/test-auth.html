@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MeetingScribe Auth API Tester</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            color: #333;
+        }
+        h1 {
+            color: #2563eb;
+            border-bottom: 2px solid #e5e7eb;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #1e40af;
+            margin-top: 20px;
+        }
+        .card {
+            background-color: #f9fafb;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+        }
+        input, button, select {
+            padding: 8px 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 4px;
+            font-size: 14px;
+            margin-bottom: 10px;
+        }
+        input {
+            width: calc(100% - 24px);
+            margin-bottom: 15px;
+        }
+        button {
+            background-color: #2563eb;
+            color: white;
+            border: none;
+            cursor: pointer;
+            padding: 10px 15px;
+            font-weight: 500;
+        }
+        button:hover {
+            background-color: #1d4ed8;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+        }
+        .response {
+            background-color: #1e293b;
+            color: #f8fafc;
+            padding: 15px;
+            border-radius: 4px;
+            overflow-x: auto;
+            font-family: monospace;
+            margin-top: 15px;
+        }
+        .error {
+            color: #ef4444;
+            margin-top: 5px;
+        }
+        .success {
+            color: #22c55e;
+            margin-top: 5px;
+        }
+        .endpoint {
+            background-color: #f3f4f6;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 14px;
+        }
+        .fixed-code {
+            background-color: #475569;
+            color: white;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+    <h1>MeetingScribe Auth API Tester</h1>
+    
+    <div class="card">
+        <h2>API Configuration</h2>
+        <label for="apiUrl">API Base URL:</label>
+        <input type="text" id="apiUrl" value="http://localhost:3001" />
+        <div>
+            <button onclick="testHealth()">Test API Health</button>
+            <button onclick="testOTP()">Test OTP System</button>
+        </div>
+        <div id="healthResponse" class="response" style="display: none;"></div>
+    </div>
+    
+    <div class="card">
+        <h2>1. Send OTP</h2>
+        <p>Endpoint: <span class="endpoint">POST /api/auth/send-otp</span></p>
+        
+        <label for="sendEmail">Email:</label>
+        <input type="email" id="sendEmail" placeholder="user@example.com" />
+        
+        <label for="otpType">OTP Type:</label>
+        <select id="otpType">
+            <option value="signup">Sign Up</option>
+            <option value="signin">Sign In</option>
+            <option value="reset">Password Reset</option>
+        </select>
+        
+        <button onclick="sendOTP()">Send OTP</button>
+        <div id="sendResponse" class="response" style="display: none;"></div>
+    </div>
+    
+    <div class="card">
+        <h2>2. Verify OTP</h2>
+        <p>Endpoint: <span class="endpoint">POST /api/auth/verify-otp</span></p>
+        <p>In development mode, the code is always <span class="fixed-code">123456</span></p>
+        
+        <label for="verifyEmail">Email:</label>
+        <input type="email" id="verifyEmail" placeholder="user@example.com" />
+        
+        <label for="otpCode">OTP Code:</label>
+        <input type="text" id="otpCode" placeholder="Enter 6-digit code" maxlength="6" value="123456" />
+        
+        <label for="verifyType">Verification Type:</label>
+        <select id="verifyType">
+            <option value="signup">Sign Up</option>
+            <option value="signin">Sign In</option>
+            <option value="reset">Password Reset</option>
+        </select>
+        
+        <button onclick="verifyOTP()">Verify OTP</button>
+        <div id="verifyResponse" class="response" style="display: none;"></div>
+    </div>
+    
+    <div class="card">
+        <h2>3. Check User Existence</h2>
+        <p>Endpoint: <span class="endpoint">GET /api/auth/check-user/:email</span></p>
+        
+        <label for="checkEmail">Email:</label>
+        <input type="email" id="checkEmail" placeholder="user@example.com" />
+        
+        <button onclick="checkUser()">Check User</button>
+        <div id="checkResponse" class="response" style="display: none;"></div>
+    </div>
+    
+    <script>
+        // Helper function to display response
+        function displayResponse(elementId, data, success = true) {
+            const element = document.getElementById(elementId);
+            element.style.display = 'block';
+            element.innerHTML = JSON.stringify(data, null, 2);
+            element.classList.remove('success', 'error');
+            element.classList.add(success ? 'success' : 'error');
+        }
+        
+        // Get API base URL
+        function getApiBaseUrl() {
+            return document.getElementById('apiUrl').value.trim();
+        }
+        
+        // Test API health
+        async function testHealth() {
+            try {
+                const baseUrl = getApiBaseUrl();
+                const response = await fetch(`${baseUrl}/api/auth/health`);
+                const data = await response.json();
+                displayResponse('healthResponse', data);
+            } catch (error) {
+                displayResponse('healthResponse', { error: error.message }, false);
+            }
+        }
+        
+        // Test OTP System
+        async function testOTP() {
+            try {
+                const baseUrl = getApiBaseUrl();
+                const response = await fetch(`${baseUrl}/api/auth/test-otp`);
+                const data = await response.json();
+                displayResponse('healthResponse', data);
+            } catch (error) {
+                displayResponse('healthResponse', { error: error.message }, false);
+            }
+        }
+        
+        // Send OTP
+        async function sendOTP() {
+            try {
+                const baseUrl = getApiBaseUrl();
+                const email = document.getElementById('sendEmail').value.trim();
+                const type = document.getElementById('otpType').value;
+                
+                if (!email) {
+                    throw new Error('Email is required');
+                }
+                
+                const response = await fetch(`${baseUrl}/api/auth/send-otp`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ email, type })
+                });
+                
+                const data = await response.json();
+                displayResponse('sendResponse', data, data.success);
+            } catch (error) {
+                displayResponse('sendResponse', { error: error.message }, false);
+            }
+        }
+        
+        // Verify OTP
+        async function verifyOTP() {
+            try {
+                const baseUrl = getApiBaseUrl();
+                const email = document.getElementById('verifyEmail').value.trim();
+                const code = document.getElementById('otpCode').value.trim();
+                const type = document.getElementById('verifyType').value;
+                
+                if (!email || !code) {
+                    throw new Error('Email and OTP code are required');
+                }
+                
+                const response = await fetch(`${baseUrl}/api/auth/verify-otp`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ email, code, type })
+                });
+                
+                const data = await response.json();
+                displayResponse('verifyResponse', data, data.success);
+            } catch (error) {
+                displayResponse('verifyResponse', { error: error.message }, false);
+            }
+        }
+        
+        // Check user existence
+        async function checkUser() {
+            try {
+                const baseUrl = getApiBaseUrl();
+                const email = document.getElementById('checkEmail').value.trim();
+                
+                if (!email) {
+                    throw new Error('Email is required');
+                }
+                
+                const response = await fetch(`${baseUrl}/api/auth/check-user/${encodeURIComponent(email)}`);
+                const data = await response.json();
+                displayResponse('checkResponse', data, data.success);
+            } catch (error) {
+                displayResponse('checkResponse', { error: error.message }, false);
+            }
+        }
+        
+        // Auto-fill the verify email when send email is filled
+        document.getElementById('sendEmail').addEventListener('input', function() {
+            document.getElementById('verifyEmail').value = this.value;
+            document.getElementById('checkEmail').value = this.value;
+        });
+    </script>
+</body>
+</html> 

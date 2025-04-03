@@ -1,0 +1,10 @@
+{
+  "buildCommand": "npm run build",
+  "outputDirectory": "build",
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "https://meetingscribe-backend.onrender.com/api/$1" }
+  ],
+  "env": {
+    "REACT_APP_API_URL": "https://meetingscribe-backend.onrender.com"
+  }
+} 

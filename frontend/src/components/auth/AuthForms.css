@@ -1,0 +1,254 @@
+.auth-form {
+  width: 100%;
+}
+
+.auth-form .form-label {
+  font-weight: 500;
+  color: #495057;
+}
+
+.auth-form .form-text {
+  margin-top: 5px;
+}
+
+.auth-form .input-group-text {
+  background-color: #f8f9fa;
+  border-right: none;
+}
+
+.auth-form .form-control:focus {
+  border-color: #86b7fe;
+  box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+}
+
+.auth-form .input-group .form-control:not(:last-child) {
+  border-right: none;
+}
+
+.auth-form .input-group button {
+  border-left: none;
+}
+
+.auth-form .social-signin-buttons {
+  margin-bottom: 2rem;
+}
+
+.auth-form .divider-text {
+  position: relative;
+  text-align: center;
+  margin: 1.5rem 0;
+  font-size: 0.875rem;
+  color: #6c757d;
+}
+
+.auth-form .divider-text::before,
+.auth-form .divider-text::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  width: 45%;
+  height: 1px;
+  background-color: #dee2e6;
+}
+
+.auth-form .divider-text::before {
+  left: 0;
+}
+
+.auth-form .divider-text::after {
+  right: 0;
+}
+
+.auth-form .auth-link {
+  color: #0d6efd;
+  text-decoration: none;
+}
+
+.auth-form .auth-link:hover {
+  text-decoration: underline;
+}
+
+/* OTP verification styles */
+
+.otp-verification {
+  max-width: 100%;
+}
+
+.otp-input {
+  font-size: 1.2rem;
+  letter-spacing: 0.2rem;
+  text-align: center;
+}
+
+/* OTP Auth Tester specific styles */
+
+.otp-auth-tester {
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.otp-auth-tester .card {
+  border-radius: 0.5rem;
+  box-shadow: 0 0.5rem 1.5rem rgba(0, 0, 0, 0.1);
+}
+
+.otp-auth-tester .card-header {
+  background-color: #f8f9fa;
+  border-bottom: 1px solid #e9ecef;
+  padding: 1rem 1.5rem;
+}
+
+.otp-auth-tester .card-body {
+  padding: 1.5rem;
+}
+
+.otp-auth-tester .list-group-item {
+  padding: 0.75rem 1.25rem;
+  font-family: monospace;
+}
+
+.otp-auth-tester .badge {
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.otp-auth-tester .bi-check-circle-fill {
+  color: #198754;
+}
+
+/* Make forms more mobile-friendly */
+@media (max-width: 576px) {
+  .otp-auth-tester .d-flex.gap-2 {
+    flex-direction: column;
+  }
+  
+  .otp-auth-tester .d-flex.gap-2 .btn {
+    margin-bottom: 0.5rem;
+  }
+  
+  .otp-auth-tester .d-flex.gap-2 .flex-grow-1 {
+    margin-right: 0 !important;
+  }
+}
+
+/* Animation for form transitions */
+.auth-form-enter {
+  opacity: 0;
+  transform: translateY(20px);
+}
+
+.auth-form-enter-active {
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 300ms, transform 300ms;
+}
+
+.auth-form-exit {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.auth-form-exit-active {
+  opacity: 0;
+  transform: translateY(20px);
+  transition: opacity 300ms, transform 300ms;
+}
+
+/* OTP Verification Styles */
+.otp-verification {
+  background: white;
+  border-radius: 8px;
+  padding: 2rem;
+}
+
+.otp-verification h4 {
+  color: #333;
+  margin-bottom: 1.5rem;
+}
+
+.otp-verification .form-control {
+  font-size: 1.2rem;
+  text-align: center;
+  letter-spacing: 0.5rem;
+  font-weight: 600;
+}
+
+.otp-verification .btn-primary {
+  font-size: 1.1rem;
+  padding: 0.75rem;
+}
+
+.otp-verification .alert-info {
+  background-color: #e8f4fd;
+  border-color: #c5e7fd;
+}
+
+.otp-verification .alert-info code {
+  font-size: 1.25rem;
+  background-color: #007bff;
+  color: white;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  letter-spacing: 0.5rem;
+}
+
+/* Tab Styles */
+.nav-tabs {
+  border-bottom: 1px solid #dee2e6;
+}
+
+.nav-tabs .nav-link {
+  margin-bottom: -1px;
+  border: 1px solid transparent;
+  border-top-left-radius: 0.25rem;
+  border-top-right-radius: 0.25rem;
+  padding: 0.5rem 1rem;
+  color: #495057;
+  transition: all 0.3s ease;
+}
+
+.nav-tabs .nav-link:hover {
+  border-color: #e9ecef #e9ecef #dee2e6;
+  color: #0d6efd;
+}
+
+.nav-tabs .nav-link.active {
+  color: #0d6efd;
+  background-color: #fff;
+  border-color: #dee2e6 #dee2e6 #fff;
+  font-weight: 600;
+}
+
+/* Admin bypass button styling */
+.admin-bypass-button {
+  font-size: 0.8rem;
+  padding: 0.3rem 0.8rem;
+  border-width: 1px;
+  border-style: dashed;
+  background-color: rgba(0, 0, 0, 0.02);
+  color: #6c757d;
+  position: relative;
+}
+
+.admin-bypass-button:hover {
+  background-color: rgba(0, 0, 0, 0.05);
+  border-style: solid;
+  color: #495057;
+}
+
+/* Modal styles for admin access */
+.modal-header .modal-title {
+  color: #495057;
+  font-weight: 600;
+}
+
+/* Add a small badge to admin users in the navbar */
+.admin-badge {
+  background-color: #6610f2;
+  color: white;
+  font-size: 0.65rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 0.2rem;
+  margin-left: 0.5rem;
+  vertical-align: middle;
+} 

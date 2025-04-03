@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test File Upload</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+        }
+        button {
+            padding: 8px 16px;
+            background-color: #4a86e8;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+        #result {
+            margin-top: 20px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background-color: #f9f9f9;
+            display: none;
+        }
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(0,0,0,0.2);
+            border-radius: 50%;
+            border-top-color: #4a86e8;
+            animation: spin 1s ease infinite;
+            margin-left: 10px;
+            vertical-align: middle;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <h1>Test Audio File Upload</h1>
+    <form id="uploadForm">
+        <div class="form-group">
+            <label for="audioFile">Select Audio File:</label>
+            <input type="file" id="audioFile" name="audioFile" accept="audio/*">
+        </div>
+        <button type="submit">Upload File</button>
+        <span id="loading" class="loading" style="display: none;"></span>
+    </form>
+    <div id="result"></div>
+
+    <script>
+        document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const fileInput = document.getElementById('audioFile');
+            const resultDiv = document.getElementById('result');
+            const loadingSpinner = document.getElementById('loading');
+            
+            if (!fileInput.files.length) {
+                resultDiv.innerHTML = 'Please select a file';
+                resultDiv.style.display = 'block';
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('audioFile', fileInput.files[0]);
+            
+            resultDiv.innerHTML = 'Uploading and processing file...';
+            resultDiv.style.display = 'block';
+            loadingSpinner.style.display = 'inline-block';
+            
+            try {
+                const response = await fetch('http://localhost:5000/api/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    resultDiv.innerHTML = `<p>Success!</p>
+                        <p>Message: ${data.message}</p>
+                        <p>File name: ${data.fileName}</p>
+                        <p><a href="http://localhost:5000/api/download/${data.fileName}" target="_blank">Download Report</a></p>`;
+                } else {
+                    resultDiv.innerHTML = `<p>Error: ${data.error}</p>
+                        <p>Details: ${data.details || 'No details available'}</p>`;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `<p>Error: ${error.message}</p>`;
+            } finally {
+                loadingSpinner.style.display = 'none';
+            }
+        });
+    </script>
+</body>
+</html> 

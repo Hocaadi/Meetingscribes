@@ -1,0 +1,299 @@
+.ask-ai-chat-container {
+  position: fixed;
+  bottom: 100px;
+  right: 30px;
+  width: 400px;
+  height: 600px;
+  max-height: 80vh;
+  z-index: 999;
+  transition: all 0.3s ease-in-out;
+  transform: translateY(20px);
+  opacity: 0;
+  visibility: hidden;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+  border-radius: 15px;
+  overflow: hidden;
+}
+
+.ask-ai-chat-container.open {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
+.ask-ai-chat-card {
+  height: 100%;
+  border: none;
+  display: flex;
+  flex-direction: column;
+}
+
+.ask-ai-chat-header {
+  background: linear-gradient(135deg, #4e54c8, #8f94fb);
+  color: white;
+  padding: 15px;
+  border-bottom: none;
+}
+
+.ask-ai-chat-title {
+  display: flex;
+  align-items: center;
+  font-size: 1.2rem;
+  font-weight: 600;
+  margin-bottom: 5px;
+}
+
+.ask-ai-chat-icon {
+  margin-right: 10px;
+  font-size: 1.2rem;
+}
+
+.ask-ai-chat-subtitle {
+  font-size: 0.85rem;
+  opacity: 0.8;
+}
+
+.ask-ai-chat-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 15px;
+  background-color: #f9f9fc;
+}
+
+.ask-ai-chat-messages {
+  display: flex;
+  flex-direction: column;
+}
+
+.ask-ai-chat-message {
+  display: flex;
+  margin-bottom: 15px;
+  max-width: 85%;
+}
+
+.ask-ai-chat-message.user {
+  align-self: flex-end;
+  flex-direction: row-reverse;
+}
+
+.ask-ai-chat-message.ai {
+  align-self: flex-start;
+}
+
+.ask-ai-chat-message.error {
+  align-self: center;
+  color: #e74c3c;
+  background-color: #fadbd8;
+  padding: 10px 15px;
+  border-radius: 10px;
+  text-align: center;
+  width: 90%;
+}
+
+.ask-ai-chat-message-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 10px;
+}
+
+.ask-ai-chat-message.user .ask-ai-chat-message-icon {
+  background-color: #4e54c8;
+  color: white;
+}
+
+.ask-ai-chat-message.ai .ask-ai-chat-message-icon {
+  background-color: #6a75f0;
+  color: white;
+}
+
+.ask-ai-chat-message-content {
+  background-color: white;
+  padding: 12px 15px;
+  border-radius: 15px;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+  word-break: break-word;
+}
+
+.ask-ai-chat-message.user .ask-ai-chat-message-content {
+  background-color: #4e54c8;
+  color: white;
+  border-top-right-radius: 0;
+}
+
+.ask-ai-chat-message.ai .ask-ai-chat-message-content {
+  background-color: white;
+  border-top-left-radius: 0;
+}
+
+.ask-ai-chat-message.loading .ask-ai-chat-message-content {
+  background-color: #eef1ff;
+  color: #4e54c8;
+  display: flex;
+  align-items: center;
+}
+
+.ask-ai-chat-message.loading .spinner-border {
+  width: 1rem;
+  height: 1rem;
+  margin-right: 10px;
+}
+
+.ask-ai-chat-message-time {
+  font-size: 0.7rem;
+  margin-top: 5px;
+  opacity: 0.7;
+  text-align: right;
+}
+
+.ask-ai-chat-footer {
+  padding: 15px;
+  border-top: 1px solid #eee;
+  background-color: white;
+}
+
+.ask-ai-chat-input-container {
+  display: flex;
+  align-items: center;
+}
+
+.ask-ai-chat-input {
+  border-radius: 20px;
+  padding: 10px 15px;
+  border: 1px solid #ddd;
+  background-color: #f5f7fb;
+  transition: all 0.2s ease-in-out;
+  margin-right: 10px;
+}
+
+.ask-ai-chat-input:focus {
+  border-color: #4e54c8;
+  box-shadow: 0 0 0 3px rgba(78, 84, 200, 0.1);
+  background-color: white;
+}
+
+.ask-ai-chat-send-button {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #4e54c8;
+  border-color: #4e54c8;
+  padding: 0;
+  transition: all 0.2s ease-in-out;
+}
+
+.ask-ai-chat-send-button:hover, .ask-ai-chat-send-button:focus {
+  background-color: #3d41a5;
+  transform: scale(1.05);
+}
+
+.ask-ai-chat-send-button:disabled {
+  background-color: #bdc3c7;
+  border-color: #bdc3c7;
+}
+
+.ask-ai-chat-error {
+  color: #e74c3c;
+  font-size: 0.85rem;
+  margin-top: 10px;
+  text-align: center;
+}
+
+.ask-ai-chat-message-source {
+  font-size: 0.7rem;
+  font-style: italic;
+  margin-top: 5px;
+  opacity: 0.7;
+}
+
+/* Source-specific styling */
+.ask-ai-chat-message.source-database .ask-ai-chat-message-icon {
+  background-color: #2980b9;
+}
+
+.ask-ai-chat-message.source-ai .ask-ai-chat-message-icon {
+  background-color: #6a75f0;
+}
+
+.ask-ai-chat-message.source-fallback .ask-ai-chat-message-icon {
+  background-color: #f39c12;
+}
+
+.ask-ai-chat-message.source-fallback .ask-ai-chat-message-content {
+  background-color: #fff8e1;
+  border-left: 3px solid #f39c12;
+  position: relative;
+}
+
+.ask-ai-chat-message.source-fallback .ask-ai-chat-message-source {
+  color: #e67e22;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+}
+
+.ask-ai-chat-message.source-fallback .ask-ai-chat-message-source::before {
+  content: "⚠️";
+  margin-right: 5px;
+  font-size: 10px;
+}
+
+/* Enhanced styling for fallback bullet points */
+.ask-ai-chat-message.source-fallback .ask-ai-chat-message-text ul,
+.ask-ai-chat-message.source-fallback .ask-ai-chat-message-text li {
+  margin-left: 0;
+  padding-left: 0;
+  list-style-type: none;
+}
+
+/* Make bullet points render nicely */
+.ask-ai-chat-message-text {
+  white-space: pre-wrap;
+}
+
+/* Add a subtle indication about the source */
+.ask-ai-chat-message.source-database .ask-ai-chat-message-source {
+  color: #2980b9;
+}
+
+.ask-ai-chat-message.source-ai .ask-ai-chat-message-source {
+  color: #6a75f0;
+}
+
+.ask-ai-chat-message.source-fallback .ask-ai-chat-message-source {
+  color: #f39c12;
+}
+
+/* Add some animation for the loading message */
+@keyframes pulse-blue {
+  0% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+.ask-ai-chat-message.loading .ask-ai-chat-message-content {
+  animation: pulse-blue 1.5s infinite;
+}
+
+/* Mobile Responsive */
+@media (max-width: 576px) {
+  .ask-ai-chat-container {
+    width: 90%;
+    height: 70vh;
+    bottom: 90px;
+    right: 5%;
+    left: 5%;
+  }
+} 

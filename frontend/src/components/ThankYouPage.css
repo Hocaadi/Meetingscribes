@@ -1,0 +1,109 @@
+.thank-you-container {
+  padding: 3rem 0;
+  max-width: 850px;
+}
+
+.thank-you-card {
+  border: none;
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+  overflow: hidden;
+  padding: 1rem;
+}
+
+.thank-you-title {
+  font-size: 2.2rem;
+  font-weight: 700;
+  color: #2c3e50;
+  margin-bottom: 1rem;
+}
+
+.thank-you-subtitle {
+  font-size: 1.1rem;
+  color: #6c757d;
+  margin-bottom: 2rem;
+}
+
+.success-icon {
+  font-size: 5rem;
+  color: #28a745;
+  margin-bottom: 1.5rem;
+  animation: pulse 2s ease-in-out;
+}
+
+@keyframes pulse {
+  0% { transform: scale(0.8); opacity: 0; }
+  50% { transform: scale(1.2); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.order-details-card {
+  background-color: #f8f9fa;
+  border: 1px solid #eaecef;
+}
+
+.order-details-card .card-header {
+  background-color: #f1f3f5;
+  color: #343a40;
+  font-weight: 600;
+  border-bottom: 1px solid #eaecef;
+}
+
+.next-steps-section {
+  padding: 1.5rem;
+  border-radius: 8px;
+  background-color: #e6f7ff;
+  border-left: 4px solid #1890ff;
+  margin-bottom: 1.5rem;
+}
+
+.next-steps-section h4 {
+  color: #0c63e4;
+  font-weight: 600;
+  margin-bottom: 1rem;
+}
+
+.next-steps-list {
+  padding-left: 1.5rem;
+  margin-bottom: 0;
+}
+
+.next-steps-list li {
+  margin-bottom: 0.5rem;
+  line-height: 1.6;
+}
+
+.action-buttons {
+  margin-top: 2rem;
+}
+
+.action-buttons .btn {
+  padding: 0.6rem 1.5rem;
+  font-weight: 500;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .thank-you-container {
+    padding: 1.5rem 1rem;
+  }
+  
+  .thank-you-title {
+    font-size: 1.8rem;
+  }
+  
+  .action-buttons .btn {
+    display: block;
+    width: 100%;
+    margin-bottom: 1rem;
+    margin-right: 0 !important;
+  }
+}
+
+.logo-image {
+  margin: 0 auto;
+  display: block;
+  background-color: #003366; /* Dark blue background matching logo */
+  border-radius: 8px;
+  padding: 10px;
+} 

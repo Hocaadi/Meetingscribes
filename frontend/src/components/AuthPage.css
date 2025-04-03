@@ -1,0 +1,107 @@
+.auth-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 0;
+  background: linear-gradient(135deg, #4a86e8 0%, #2563eb 100%);
+}
+
+.auth-form-card {
+  border: none;
+  border-radius: 12px;
+  overflow: hidden;
+  padding: 1.5rem;
+  transition: all 0.3s ease;
+  max-width: 500px;
+  margin: 0 auto;
+  background-color: white;
+}
+
+.auth-form-card:hover {
+  box-shadow: 0 15px 30px rgba(0, 0, 0, 0.15) !important;
+  transform: translateY(-5px);
+}
+
+/* Clerk customization */
+:root {
+  --clerk-primary: #4a86e8;
+  --clerk-primary-hover: #2563eb;
+}
+
+/* Style Clerk buttons to match Bootstrap */
+.cl-button {
+  height: auto !important;
+  padding: 10px 20px !important;
+  font-weight: 500 !important;
+  border-radius: 5px !important;
+  transition: all 0.3s ease !important;
+}
+
+.cl-button:hover {
+  transform: translateY(-2px) !important;
+}
+
+.cl-formButtonPrimary {
+  background-color: var(--clerk-primary) !important;
+}
+
+.cl-formButtonPrimary:hover {
+  background-color: var(--clerk-primary-hover) !important;
+  box-shadow: 0 5px 15px rgba(74, 134, 232, 0.3) !important;
+}
+
+.cl-socialButtonsIconButton {
+  border-radius: 5px !important;
+  transition: all 0.3s ease !important;
+}
+
+.cl-socialButtonsIconButton:hover {
+  transform: translateY(-2px) !important;
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1) !important;
+}
+
+/* Make Clerk Elements match Bootstrap */
+.cl-card {
+  box-shadow: none !important; 
+  width: 100% !important;
+}
+
+.cl-formField {
+  margin-bottom: 1.25rem !important;
+}
+
+.cl-footerActionLink, .cl-footerActionText {
+  font-size: 0.9rem !important;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .auth-page {
+    padding: 40px 15px;
+  }
+  
+  .auth-form-card {
+    padding: 1rem;
+  }
+}
+
+.back-to-home {
+  color: white;
+  font-weight: 500;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  transition: all 0.3s ease;
+  font-size: 1rem;
+  margin-bottom: 10px;
+}
+
+.back-to-home i {
+  margin-right: 6px;
+}
+
+.back-to-home:hover {
+  color: rgba(255, 255, 255, 0.8);
+  transform: translateX(-5px);
+} 
