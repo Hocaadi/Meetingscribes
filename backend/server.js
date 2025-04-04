@@ -33,27 +33,56 @@ console.log('Starting MeetingScribe backend server...');
 // Configure Socket.io using our abstracted config
 const io = setupSocketIO(server);
 
-// Apply CORS middleware globally with maximum permissiveness for production deployments
+// Apply CORS middleware with proper dynamic origin handling
 app.use((req, res, next) => {
-  // Get origin from request or allow all (*) as fallback
-  const origin = req.headers.origin || '*';
+  const origin = req.headers.origin;
   
-  // Set permissive CORS headers for all routes
-  res.header('Access-Control-Allow-Origin', origin);
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-user-id, x-session-id');
-  res.header('Access-Control-Allow-Credentials', 'true');
-  res.header('Access-Control-Max-Age', '86400'); // 24 hours
-  
-  // Handle preflight OPTIONS requests immediately
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
+  // Apply CORS headers based on the request origin
+  if (origin) {
+    // Check if the origin is allowed
+    if (corsOptions.origin && typeof corsOptions.origin === 'function') {
+      corsOptions.origin(origin, (err, allowed) => {
+        if (err) {
+          // Not allowed - don't set CORS headers
+          res.vary('Origin');
+          next();
+        } else {
+          // Origin is allowed, set the appropriate headers
+          res.header('Access-Control-Allow-Origin', allowed === true ? origin : allowed);
+          res.header('Access-Control-Allow-Methods', corsOptions.methods.join(', '));
+          res.header('Access-Control-Allow-Headers', corsOptions.allowedHeaders.join(', '));
+          res.header('Access-Control-Allow-Credentials', corsOptions.credentials);
+          res.header('Access-Control-Max-Age', corsOptions.maxAge);
+          
+          // Handle preflight OPTIONS requests immediately
+          if (req.method === 'OPTIONS') {
+            return res.status(corsOptions.optionsSuccessStatus).end();
+          }
+          
+          next();
+        }
+      });
+    } else {
+      // Default behavior if no function is provided
+      res.header('Access-Control-Allow-Origin', origin);
+      res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+      res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-user-id, x-session-id');
+      res.header('Access-Control-Allow-Credentials', 'true');
+      
+      // Handle preflight OPTIONS requests immediately
+      if (req.method === 'OPTIONS') {
+        return res.status(204).end();
+      }
+      
+      next();
+    }
+  } else {
+    // No origin header - continue without setting CORS headers
+    next();
   }
-  
-  next();
 });
 
-// Original CORS middleware still in place as backup
+// Also use the proper cors middleware as backup
 app.use(cors(corsOptions));
 
 // Set longer timeouts for upload requests

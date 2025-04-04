@@ -47,9 +47,9 @@ const SOCKET_CONFIG = {
   forceNew: true,                 
   autoConnect: true,              
   withCredentials: false,         // Start without credentials for better CORS compatibility
+  // Don't set CORS headers from client side - servers control this
   extraHeaders: {                 
-    'Origin': window.location.origin,
-    'Access-Control-Allow-Origin': '*'
+    'Origin': window.location.origin
   }
 };
 
@@ -63,7 +63,7 @@ const SOCKET_FALLBACK_CONFIGS = [
   { withCredentials: false, transports: ['polling'] },
   // Try websocket only
   { withCredentials: false, transports: ['websocket'] },
-  // Try with explicit origin header
+  // Try with explicit origin header only
   { 
     withCredentials: false, 
     transports: ['polling', 'websocket'],

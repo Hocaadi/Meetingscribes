@@ -6,26 +6,26 @@ function setupSocketIO(server) {
   // Determine if we're in production
   const isProduction = process.env.NODE_ENV === 'production';
   
-  // Create socket.io server with very permissive CORS settings
+  // Create socket.io server with proper CORS settings
   const io = new Server(server, {
     cors: {
+      // Use the allowedOrigins list from our cors-config
       origin: function(origin, callback) {
         // In production, be more permissive with CORS
         if (isProduction) {
-          callback(null, origin || '*');
-          return;
-        }
-        
-        // In development, use more restrictive but still permissive approach
-        if (!origin || allowedOrigins.some(allowed => 
-          allowed === origin || 
-          (allowed.includes('*') && new RegExp(allowed.replace('*', '.*')).test(origin)) ||
-          origin.includes('meetingscribe'))) {
-          callback(null, origin); // Important: Return the exact origin
+          // We should accept any of our allowed origins
+          if (!origin || 
+              allowedOrigins.includes(origin) || 
+              origin.includes('meetingscribe') || 
+              origin.includes('vercel.app')) {
+            callback(null, true); // Allow the request with the origin
+          } else {
+            console.log(`Rejected socket connection from origin: ${origin}`);
+            callback(new Error('Origin not allowed by CORS policy'));
+          }
         } else {
-          console.log(`Rejected socket connection from origin: ${origin}`);
-          // For debugging, allow anyway
-          callback(null, origin);
+          // In development, accept all origins
+          callback(null, true);
         }
       },
       methods: ['GET', 'POST', 'PUT', 'OPTIONS'],
@@ -33,17 +33,15 @@ function setupSocketIO(server) {
       allowedHeaders: ['Content-Type', 'Authorization', 'x-user-id', 'x-session-id']
     },
     // Socket.io specific options
-    transports: ['polling', 'websocket'], // Try polling first (critical for Render/Vercel)
+    transports: ['polling', 'websocket'], // Try polling first
     pingTimeout: 60000,
     pingInterval: 25000,
     path: '/socket.io/', // Explicit path
     connectTimeout: 45000, // Longer timeout
-    // Below settings help with Render's/Vercel's connection limitations
     allowUpgrades: true,
     upgradeTimeout: 10000,
     maxHttpBufferSize: 1e8, // 100MB for larger payloads
-    // Allow CORS credentials
-    allowEIO3: true,
+    // Set the cookie configuration for Socket.IO
     cookie: {
       name: 'io',
       path: '/',
