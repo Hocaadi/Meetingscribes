@@ -36,6 +36,41 @@ const io = setupSocketIO(server);
 // Apply CORS middleware globally - using centralized corsOptions
 app.use(cors(corsOptions));
 
+// Add explicitly permissive CORS for all API routes
+app.use('/api', (req, res, next) => {
+  const origin = req.headers.origin;
+  // Always set CORS headers for API routes
+  res.header('Access-Control-Allow-Origin', origin || '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-user-id, x-session-id');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.header('Access-Control-Max-Age', '86400');
+  
+  // For OPTIONS requests, return immediately
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+  
+  next();
+});
+
+// Add explicit permissive CORS for socket.io routes
+app.use('/socket.io', (req, res, next) => {
+  const origin = req.headers.origin;
+  // Always set CORS headers for socket.io
+  res.header('Access-Control-Allow-Origin', origin || '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-user-id, x-session-id');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  
+  // For OPTIONS requests, return immediately
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+  
+  next();
+});
+
 // Set longer timeouts for upload requests
 app.use((req, res, next) => {
   if (req.path.includes('/api/upload')) {

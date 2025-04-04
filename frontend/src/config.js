@@ -10,6 +10,12 @@ const DEV_API_URL = 'http://localhost:5000';
 // For production - deployed backend URL
 const PROD_API_URL = 'https://meetingscribe-backend.onrender.com';
 
+// Alternative backup URLs in case the main one fails
+const BACKUP_API_URLS = [
+  'https://meetingscribe-backend.onrender.com',
+  'https://cors-anywhere.herokuapp.com/https://meetingscribe-backend.onrender.com'
+];
+
 // Allow override from environment variables
 const API_URL = process.env.REACT_APP_API_URL || (isDev ? DEV_API_URL : PROD_API_URL);
 
@@ -35,23 +41,39 @@ const SOCKET_CONFIG = {
   transports: ['polling', 'websocket'],  // Try polling first, fall back to websocket
   forceNew: true,                 // Force new connection
   autoConnect: true,              // Auto connect
-  withCredentials: true,          // Use credentials mode
+  withCredentials: false,         // Try without credentials first - this often helps with CORS
   extraHeaders: {                 // Extra headers for CORS
-    'Access-Control-Allow-Origin': '*'
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Credentials': 'true'
   }
 };
+
+// Socket.io fallback configs to try if the main one fails
+const SOCKET_FALLBACK_CONFIGS = [
+  // Try with credentials
+  { withCredentials: true, transports: ['polling', 'websocket'] },
+  // Try without credentials
+  { withCredentials: false, transports: ['polling', 'websocket'] },
+  // Try polling only
+  { withCredentials: false, transports: ['polling'] },
+  // Try websocket only
+  { withCredentials: false, transports: ['websocket'] }
+];
 
 // Upload configuration with CORS handling
 const UPLOAD_CONFIG = {
   CHUNK_SIZE: 5 * 1024 * 1024, // 5 MB per chunk
-  MAX_RETRIES: 3,
+  MAX_RETRIES: 5,               // Increased from 3
   RETRY_DELAY: 2000,
-  CREDENTIALS_MODE: true,
+  CREDENTIALS_MODE: false,      // Try without credentials first
   // Progressive fallback for CORS issues
   FALLBACK_STRATEGIES: [
+    { withCredentials: false, includeContentType: true },
     { withCredentials: true, includeContentType: true },
     { withCredentials: true, includeContentType: false },
-    { withCredentials: false, includeContentType: false }
+    { withCredentials: false, includeContentType: false },
+    // Last resort: try a CORS proxy
+    { withCredentials: false, includeContentType: true, useProxy: true }
   ]
 };
 
@@ -76,23 +98,40 @@ const isCorsError = (error) => {
   const isResponseEmpty = error?.response?.status === 0;
   const isNetworkError = errorMsg.includes('Network Error');
   const hasCorsInMsg = errorMsg.includes('CORS') || errorMsg.includes('cross-origin');
+  const is502Error = error?.response?.status === 502;
   
-  return isResponseEmpty || isNetworkError || hasCorsInMsg;
+  return isResponseEmpty || isNetworkError || hasCorsInMsg || is502Error;
+};
+
+// Function to get a proxy URL if needed
+const getProxyUrl = (url) => {
+  // Only use proxy in production and when explicitly requested
+  const useProxy = !isDev && localStorage.getItem('use_proxy') === 'true';
+  
+  if (useProxy) {
+    // Use CORS Anywhere as a fallback
+    return `https://cors-anywhere.herokuapp.com/${url}`;
+  }
+  
+  return url;
 };
 
 // Export configuration
 export default {
   API_URL: FINAL_API_URL,
-  BACKUP_API_URL: isDev ? PROD_API_URL : null, // Use production as backup in dev mode
+  BACKUP_API_URLS,
+  BACKUP_API_URL: isDev ? PROD_API_URL : BACKUP_API_URLS[0], 
   SOCKET_URL: FINAL_API_URL,
+  SOCKET_CONFIG,
+  SOCKET_FALLBACK_CONFIGS,
   AUTH_API_URL: `${FINAL_API_URL}/api/auth`,
   MAX_FILE_SIZE,
   UPLOAD_CONFIG,
-  SOCKET_CONFIG,
   MAX_MEETING_LENGTH_HOURS: 2,
   UPLOAD_TIMEOUT: 120000, // 2 minutes
-  MAX_RETRIES: 3,
+  MAX_RETRIES: 5,         // Increased from 3
   ERROR_MESSAGES,
   isCorsError,
+  getProxyUrl,
   isDev
 }; 

@@ -6,11 +6,20 @@ function setupSocketIO(server) {
   const io = new Server(server, {
     cors: {
       origin: function(origin, callback) {
-        if (!origin || allowedOrigins.includes(origin) || origin.includes('meetingscribe')) {
+        // Use the same permissive logic as in cors-config.js
+        if (!origin || allowedOrigins.some(allowed => 
+          allowed === origin || 
+          (allowed.includes('*') && new RegExp(allowed.replace('*', '.*')).test(origin)) ||
+          origin.includes('meetingscribe'))) {
           callback(null, origin); // Important: Return the exact origin
         } else {
           console.log(`Rejected socket connection from origin: ${origin}`);
-          callback(new Error('Not allowed by CORS'));
+          // For debugging, allow all origins in development
+          if (process.env.NODE_ENV === 'development') {
+            callback(null, origin);
+          } else {
+            callback(new Error('Not allowed by CORS'));
+          }
         }
       },
       methods: ['GET', 'POST', 'OPTIONS'],
@@ -48,6 +57,25 @@ function setupSocketIO(server) {
     socket.on('disconnect', () => {
       console.log('Client disconnected:', socket.id);
     });
+
+    // Handle connection errors
+    socket.on('error', (error) => {
+      console.error(`Socket error for client ${socket.id}:`, error);
+      // Try to notify the client about the error
+      try {
+        socket.emit('server_error', { 
+          message: 'Server socket error',
+          details: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+        });
+      } catch (emitError) {
+        console.error('Error emitting error event:', emitError);
+      }
+    });
+  });
+
+  // Handle server-level errors
+  io.engine.on('connection_error', (err) => {
+    console.error('Socket.io connection error:', err);
   });
 
   // Create global emitter function for use elsewhere

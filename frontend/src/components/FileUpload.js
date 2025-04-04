@@ -178,7 +178,7 @@ const FileUpload = () => {
   
   // WebSocket related state
   const [socket, setSocket] = useState(null);
-  const [sessionId] = useState(() => {
+  const [sessionId, setSessionId] = useState(() => {
     // Try to get existing session ID from localStorage
     const savedSessionId = localStorage.getItem('sessionId');
     return savedSessionId || uuidv4();
@@ -245,7 +245,7 @@ const FileUpload = () => {
     forceRerender();
     
     // Schedule it to run again after a slight delay in case of async rendering issues
-    const timeout = setTimeout(forceRerender, 500);
+    const timeout = setTimeout(forceRerender, 50000);
     return () => clearTimeout(timeout);
   }, []);
   
@@ -293,10 +293,8 @@ const FileUpload = () => {
     };
   }, []); // Empty dependency array means this runs only on mount/unmount
   
-  // Initialize WebSocket connection with better error handling for CORS issues
+  // Helper function to set up socket connection
   const connectSocket = () => {
-    console.log('Initializing WebSocket connection with session ID:', sessionId);
-    
     // Update both state and ref
     setSocketStatus('connecting');
     socketStatusRef.current = 'connecting';
@@ -305,25 +303,41 @@ const FileUpload = () => {
     let reconnectCount = 0;
     const maxReconnects = 5;
     
+    // Track which config we're using
+    let currentConfigIndex = 0;
+    
     // Function to attempt socket connection with different strategies
-    const attemptConnection = (withCredentials = true, transportList = ['polling', 'websocket']) => {
+    const attemptConnection = (configIndex = 0) => {
       try {
-        console.log(`Attempting socket connection with credentials=${withCredentials}, transports=${transportList.join(',')}`);
+        // Get the current connection config to try
+        const currentConfig = configIndex === 0 ? 
+          config.SOCKET_CONFIG : 
+          config.SOCKET_FALLBACK_CONFIGS[configIndex - 1] || config.SOCKET_CONFIG;
         
+        console.log(`Attempting socket connection with config #${configIndex}:`, currentConfig);
+        
+        // Add session ID to the config
         const socketOptions = {
-          query: { sessionId },
-          reconnection: true,
-          reconnectionAttempts: 5,
-          reconnectionDelay: 2000,
-          reconnectionDelayMax: 10000,
-          timeout: 60000,
-          transports: transportList,
-          forceNew: true,
-          autoConnect: true,
-          withCredentials: withCredentials
+          ...currentConfig,
+          query: { sessionId }
         };
         
-        const newSocket = io(config.API_URL, socketOptions);
+        // Try different API URLs if needed
+        let apiUrl = config.API_URL;
+        if (configIndex > 2 && config.BACKUP_API_URLS.length > 0) {
+          // Try backup URLs for later attempts
+          const backupIndex = Math.min(configIndex - 3, config.BACKUP_API_URLS.length - 1);
+          apiUrl = config.BACKUP_API_URLS[backupIndex];
+          console.log(`Trying backup API URL: ${apiUrl}`);
+        }
+        
+        // Try with proxy as last resort
+        if (configIndex > config.SOCKET_FALLBACK_CONFIGS.length + 2) {
+          apiUrl = config.getProxyUrl(apiUrl);
+          console.log(`Trying with CORS proxy: ${apiUrl}`);
+        }
+        
+        const newSocket = io(apiUrl, socketOptions);
         
         // Set up connection error handler
         newSocket.on('connect_error', (error) => {
@@ -331,40 +345,28 @@ const FileUpload = () => {
           reconnectCount++;
           
           if (reconnectCount >= maxReconnects) {
-            console.log('Max reconnect attempts reached, falling back to HTTP polling');
-            setSocketStatus('error');
-            socketStatusRef.current = 'error';
-            setupPollingFallback();
+            console.log('Max reconnect attempts reached with current config');
             
-            // Suppress further reconnection attempts
-            newSocket.io.reconnection(false);
-            return;
-          }
-          
-          // Try different strategies based on the error
-          if (error.message?.includes('CORS') || error.message?.includes('credentials') || error.message?.includes('timeout') || error.message?.includes('xhr poll error')) {
-            console.log(`Connection issue detected (${error.message}) - trying fallback approach`);
+            // Try next configuration approach
+            currentConfigIndex++;
             
-            if (withCredentials && transportList.includes('websocket') && transportList.includes('polling')) {
-              // First try with polling only transport (more reliable)
-              console.log('Trying with polling transport only');
-              newSocket.disconnect();
-              return attemptConnection(true, ['polling']);
-            } else if (withCredentials) {
-              // Then try without credentials
-              console.log('Trying without credentials');
-              newSocket.disconnect();
-              return attemptConnection(false, transportList);
-            } else {
-              console.log('All connection attempts failed, setting up HTTP polling fallback');
+            // If we've tried all configs, fall back to HTTP polling
+            if (currentConfigIndex > config.SOCKET_FALLBACK_CONFIGS.length + 3) {
+              console.log('All connection strategies failed, falling back to HTTP polling');
               setSocketStatus('error');
               socketStatusRef.current = 'error';
               setupPollingFallback();
+              
+              // Suppress further reconnection attempts
+              newSocket.io.reconnection(false);
+              return;
             }
-          } else {
-            // Handle other types of errors
-            setSocketStatus('error');
-            socketStatusRef.current = 'error';
+            
+            // Try the next configuration
+            console.log(`Trying connection config #${currentConfigIndex}`);
+            newSocket.disconnect();
+            reconnectCount = 0;
+            return attemptConnection(currentConfigIndex);
           }
         });
         
@@ -374,6 +376,9 @@ const FileUpload = () => {
           setSocketStatus('connected');
           socketStatusRef.current = 'connected';
           reconnectCount = 0; // Reset counter on successful connection
+          
+          // Setup all the standard socket event handlers
+          setupSocketEvents(newSocket);
         });
         
         // Set up disconnect handler
@@ -383,15 +388,16 @@ const FileUpload = () => {
           socketStatusRef.current = 'disconnected';
         });
         
-        // Set up standard event listeners for processing updates
-        newSocket.on('processing_update', (data) => {
-          console.log('Received processing update:', data);
-          handleProcessingUpdate(data);
-        });
-        
-        // Handle pongs (responses to pings)
-        newSocket.on('pong', (data) => {
-          console.log('Received pong:', data);
+        // Set up server error handler
+        newSocket.on('server_error', (data) => {
+          console.error('Server reported an error:', data);
+          setProcessingUpdates(prev => [...prev, {
+            id: Date.now(),
+            status: 'error',
+            message: `Server error: ${data.message || 'Unknown error'}`,
+            details: data.details,
+            timestamp: new Date().toISOString()
+          }]);
         });
         
         // Save socket instance to both state and ref
@@ -405,6 +411,16 @@ const FileUpload = () => {
         };
       } catch (error) {
         console.error('Error creating socket:', error);
+        
+        // Try next configuration approach if available
+        currentConfigIndex++;
+        if (currentConfigIndex <= config.SOCKET_FALLBACK_CONFIGS.length + 3) {
+          console.log(`Trying connection config #${currentConfigIndex} after error`);
+          reconnectCount = 0;
+          return attemptConnection(currentConfigIndex);
+        }
+        
+        // Fall back to polling if all socket attempts fail
         setupPollingFallback();
         return () => {};
       }
@@ -446,7 +462,7 @@ const FileUpload = () => {
             'x-session-id': sessionId
           },
           withCredentials: true,
-          timeout: 10000
+          timeout: 1000000
         })
         .then(response => {
           if (response.data) {
@@ -464,7 +480,7 @@ const FileUpload = () => {
     };
     
     // Start with the preferred connection method
-    return attemptConnection(true, ['polling', 'websocket']);
+    return attemptConnection(0);
   };
 
   // Helper function to set up socket event listeners
@@ -618,7 +634,7 @@ const FileUpload = () => {
                 'x-user-id': user?.id || '',
                 'x-session-id': sessionId
               },
-              timeout: 10000
+              timeout: 1000000
             })
             .then(response => {
               if (response.data) {
@@ -677,10 +693,10 @@ const FileUpload = () => {
       progressTimer = setInterval(() => {
         // Check if progress has changed in the last 30 seconds
         if (progress === lastProgress) {
-          stalledTime += 5000;
+          stalledTime += 500000;
           
           // After 60 seconds with no progress, warn the user
-          if (stalledTime === 60000) {
+          if (stalledTime === 6000000) {
             setProcessingUpdates(prev => [...prev, {
               id: Date.now(),
               status: 'warning',
@@ -794,413 +810,324 @@ const FileUpload = () => {
     setShowEvaluationOptions(!showEvaluationOptions);
   };
 
-  // Update the uploadChunk function to handle various CORS and server errors with better fallback
-  const uploadChunk = async (chunkIndex, totalChunks, fileId, commonFormData, headers, uploadedChunks) => {
-    const start = chunkIndex * config.UPLOAD_CONFIG.CHUNK_SIZE;
-    const end = Math.min(file.size, start + config.UPLOAD_CONFIG.CHUNK_SIZE);
-    const chunk = file.slice(start, end);
+  // Utility function to format file size
+  const formatFileSize = (bytes) => {
+    if (bytes === 0) return '0 Bytes';
     
-    // Create a new FormData object for this chunk
-    const formData = new FormData();
-    formData.append('chunk', chunk, `chunk-${chunkIndex}`);
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
     
-    // Add all the common data
-    Object.entries(commonFormData).forEach(([key, value]) => {
-      formData.append(key, value);
-    });
-    
-    // Add chunk-specific data
-    formData.append('chunkIndex', chunkIndex);
-    formData.append('start', start);
-    formData.append('end', end);
-    
-    let retryCount = 0;
-    let success = false;
-    
-    // Try different approaches to upload the chunk
-    const maxAttempts = config.UPLOAD_CONFIG.MAX_RETRIES;
-    
-    // Try each fallback strategy in sequence
-    for (let strategyIndex = 0; strategyIndex < config.UPLOAD_CONFIG.FALLBACK_STRATEGIES.length && !success; strategyIndex++) {
-      // Reset retry counter for each strategy
-      retryCount = 0;
-      
-      // Get the current strategy
-      const strategy = config.UPLOAD_CONFIG.FALLBACK_STRATEGIES[strategyIndex];
-      
-      // Log the strategy we're trying
-      console.log(`[Chunk ${chunkIndex + 1}/${totalChunks}] Trying upload strategy:`, 
-        strategy.withCredentials ? 'With credentials' : 'Without credentials', 
-        strategy.includeContentType ? 'With Content-Type' : 'Without Content-Type');
-      
-      while (retryCount < maxAttempts && !success) {
-        try {
-          // Log the chunk upload attempt
-          if (retryCount > 0) {
-            console.log(`Retrying chunk ${chunkIndex + 1}/${totalChunks} with strategy ${strategyIndex + 1} (attempt ${retryCount + 1})`);
-            
-            // Add a processing update for retries
-            setProcessingUpdates(prev => [...prev, {
-              id: Date.now(),
-              status: 'warning',
-              message: `Retrying chunk ${chunkIndex + 1}/${totalChunks} (attempt ${retryCount + 1})`,
-              timestamp: new Date().toISOString()
-            }]);
-          } else {
-            console.log(`Uploading chunk ${chunkIndex + 1}/${totalChunks} with strategy ${strategyIndex + 1}`);
-          }
-          
-          // Prepare headers based on strategy
-          const requestHeaders = { ...headers };
-          
-          // Optionally include Content-Type based on strategy
-          if (!strategy.includeContentType) {
-            delete requestHeaders['Content-Type'];
-          }
-          
-          // Upload the chunk with headers and timeout
-          const response = await axios.post(`${config.API_URL}/api/upload/chunk`, formData, {
-            headers: requestHeaders,
-            timeout: config.UPLOAD_TIMEOUT,
-            withCredentials: strategy.withCredentials
-          });
-          
-          // Check if the server response indicates success
-          if (response.data.success) {
-            // Mark chunk as successfully uploaded
-            uploadedChunks[chunkIndex] = true;
-            success = true;
-            
-            // Update progress
-            const completedChunks = uploadedChunks.filter(Boolean).length;
-            const progressPercent = Math.floor((completedChunks / totalChunks) * 50); // First 50% of total progress
-            setProgress(progressPercent);
-            
-            console.log(`Successfully uploaded chunk ${chunkIndex + 1}/${totalChunks} with strategy ${strategyIndex + 1}`);
-            return true;
-          } else {
-            throw new Error(response.data.message || 'Server returned unsuccessful response');
-          }
-        } catch (error) {
-          retryCount++;
-          
-          // Detect the type of error
-          const isCorsIssue = config.isCorsError(error);
-          const isBadGateway = error.message?.includes('502') || error.message?.includes('Bad Gateway');
-          const isTimeout = error.message?.includes('timeout');
-          
-          // Log appropriate error type
-          if (isCorsIssue) {
-            console.error(`CORS error uploading chunk ${chunkIndex + 1}/${totalChunks} (strategy ${strategyIndex + 1}, attempt ${retryCount})`);
-          } else if (isBadGateway) {
-            console.error(`502 Bad Gateway error uploading chunk ${chunkIndex + 1}/${totalChunks} (strategy ${strategyIndex + 1}, attempt ${retryCount})`);
-          } else if (isTimeout) {
-            console.error(`Timeout error uploading chunk ${chunkIndex + 1}/${totalChunks} (strategy ${strategyIndex + 1}, attempt ${retryCount})`);
-          } else {
-            console.error(`Error uploading chunk ${chunkIndex + 1}/${totalChunks} (strategy ${strategyIndex + 1}, attempt ${retryCount}):`, error.message);
-          }
-          
-          // If we've reached max retries with this strategy, we'll move to the next strategy
-          if (retryCount >= maxAttempts) {
-            console.log(`Failed all attempts with strategy ${strategyIndex + 1}, will try next strategy if available`);
-            
-            // If this is the last strategy, log it as a complete failure
-            if (strategyIndex === config.UPLOAD_CONFIG.FALLBACK_STRATEGIES.length - 1) {
-              console.error(`Failed to upload chunk ${chunkIndex + 1} after all strategies and ${maxAttempts * config.UPLOAD_CONFIG.FALLBACK_STRATEGIES.length} total attempts`);
-              
-              // Add this to the processing updates
-              setProcessingUpdates(prev => [...prev, {
-                id: Date.now(),
-                status: 'error',
-                message: `Failed to upload chunk ${chunkIndex + 1}/${totalChunks}`,
-                details: isCorsIssue ? config.ERROR_MESSAGES.CORS_ISSUE : 
-                         isBadGateway ? config.ERROR_MESSAGES.BAD_GATEWAY :
-                         isTimeout ? config.ERROR_MESSAGES.TIMEOUT :
-                         error.message,
-                timestamp: new Date().toISOString()
-              }]);
-            } else {
-              // Moving to next strategy, add info message
-              setProcessingUpdates(prev => [...prev, {
-                id: Date.now(),
-                status: 'info',
-                message: isCorsIssue ? config.ERROR_MESSAGES.CORS_ISSUE : 
-                          isBadGateway ? config.ERROR_MESSAGES.BAD_GATEWAY :
-                          "Trying alternative upload approach...",
-                timestamp: new Date().toISOString()
-              }]);
-            }
-            break; // Exit this retry loop to try next strategy
-          }
-          
-          // Calculate delay based on the type of error
-          const baseDelay = isCorsIssue || isBadGateway ? 5000 : config.UPLOAD_CONFIG.RETRY_DELAY;
-          const delay = Math.min(30000, baseDelay * Math.pow(1.5, retryCount));
-          
-          // Add a message about the retry delay
-          console.log(`Waiting ${delay}ms before retry...`);
-          
-          // Wait before retrying
-          await new Promise(resolve => setTimeout(resolve, delay));
-        }
-      }
-    }
-    
-    // If we got here without success after trying all strategies, return false
-    return success;
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
-  // Update the handleUpload function to better handle failed chunks
-  const handleUpload = async () => {
-    if (!file) {
-      setError('Please select a file to upload');
-      return;
-    }
+  // Helper function to calculate overall progress from chunk data
+  const calculateOverallProgress = (chunks) => {
+    if (!chunks.length) return 0;
     
-    // If user is not signed in, show error
-    if (!isSignedIn) {
-      setError('Please sign in to use this feature');
-      return;
-    }
+    // Sum up progress across all chunks
+    const totalProgress = chunks.reduce((sum, chunk) => sum + (chunk.progress || 0), 0);
+    // Average progress (0-100)
+    return totalProgress / chunks.length;
+  };
+
+  // Upload file chunk with multiple fallback strategies for CORS issues
+  const uploadChunk = async (chunkIndex, totalChunks, fileId, commonFormData, headers, uploadedChunks, strategyIndex = 0) => {
+    // Get the appropriate strategy based on the current index
+    const strategies = config.UPLOAD_CONFIG.FALLBACK_STRATEGIES;
+    const strategy = strategies[strategyIndex] || strategies[0];
     
-    // Check if user has exceeded free tier limit
-    if (usageData?.upgradeRequired) {
-      setShowUpgradeModal(true);
-      return;
-    }
+    console.log(`Uploading chunk ${chunkIndex + 1}/${totalChunks} (strategy ${strategyIndex + 1}, attempt ${uploadedChunks[chunkIndex].attempts})`);
     
     try {
-      // Clear previous states
+      // Prepare URL - use proxy if specified in the strategy
+      let uploadUrl = `${config.API_URL}/api/upload/chunk`;
+      if (strategy.useProxy) {
+        uploadUrl = config.getProxyUrl(uploadUrl);
+        console.log(`Using CORS proxy for upload: ${uploadUrl}`);
+      }
+      
+      // Prepare form data with chunk info
+      const formData = new FormData();
+      
+      // Add common form data
+      for (const [key, value] of Object.entries(commonFormData)) {
+        formData.append(key, value);
+      }
+      
+      // Add chunk-specific data
+      formData.append('chunkIndex', chunkIndex);
+      formData.append('totalChunks', totalChunks);
+      formData.append('fileId', fileId);
+      formData.append('chunk', uploadedChunks[chunkIndex].data);
+      
+      // Configure request headers based on strategy
+      const requestConfig = {
+        headers: { ...headers },
+        withCredentials: strategy.withCredentials,
+        timeout: config.UPLOAD_TIMEOUT,
+        onUploadProgress: (progressEvent) => {
+          // Calculate progress for this chunk
+          const chunkProgress = (progressEvent.loaded / progressEvent.total) * 100;
+          
+          // Update progress for this specific chunk
+          const updatedChunks = [...uploadedChunks];
+          updatedChunks[chunkIndex].progress = chunkProgress;
+          setUploadedChunks(updatedChunks);
+          
+          // Calculate overall progress (up to 50% - the rest is for processing)
+          const overallProgress = calculateOverallProgress(updatedChunks) / 2;
+          setProgress(overallProgress);
+        }
+      };
+      
+      // If strategy indicates to exclude Content-Type header, delete it
+      // This can help with certain CORS configurations
+      if (!strategy.includeContentType) {
+        delete requestConfig.headers['Content-Type'];
+      }
+      
+      // Send the upload request
+      const response = await axios.post(uploadUrl, formData, requestConfig);
+      
+      // Mark this chunk as uploaded
+      const updatedChunks = [...uploadedChunks];
+      updatedChunks[chunkIndex].uploaded = true;
+      updatedChunks[chunkIndex].progress = 100;
+      setUploadedChunks(updatedChunks);
+      
+      console.log(`Chunk ${chunkIndex + 1}/${totalChunks} uploaded successfully`);
+      
+      // Return response data
+      return response.data;
+    } catch (error) {
+      console.error(`Error uploading chunk ${chunkIndex + 1}/${totalChunks}:`, error);
+      
+      // Track the attempt
+      const updatedChunks = [...uploadedChunks];
+      updatedChunks[chunkIndex].attempts += 1;
+      setUploadedChunks(updatedChunks);
+      
+      // Check if it's a CORS error
+      const isCors = config.isCorsError(error);
+      
+      // If it's a CORS error or 502, try the next strategy if available
+      if ((isCors || error?.response?.status === 502) && strategyIndex < strategies.length - 1) {
+        console.log(`CORS or server error detected. Trying next upload strategy (${strategyIndex + 2}/${strategies.length})`);
+        
+        setProcessingUpdates(prev => [...prev, {
+          id: Date.now(),
+          status: 'warning',
+          message: config.ERROR_MESSAGES.CORS_ISSUE,
+          timestamp: new Date().toISOString()
+        }]);
+        
+        // Add a small delay before retrying with the next strategy
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        // Try the next strategy
+        return uploadChunk(chunkIndex, totalChunks, fileId, commonFormData, headers, uploadedChunks, strategyIndex + 1);
+      }
+      
+      // For server errors, add retry delay
+      if (error?.response?.status >= 500) {
+        console.log('Server error. Adding delay before retry...');
+        await new Promise(resolve => setTimeout(resolve, config.UPLOAD_CONFIG.RETRY_DELAY));
+      }
+      
+      // If we've exceeded retry attempts, throw the error
+      if (uploadedChunks[chunkIndex].attempts >= config.UPLOAD_CONFIG.MAX_RETRIES) {
+        throw error;
+      }
+      
+      // Otherwise, retry with the same strategy
+      console.log(`Retrying chunk ${chunkIndex + 1}/${totalChunks} (attempt ${uploadedChunks[chunkIndex].attempts + 1}/${config.UPLOAD_CONFIG.MAX_RETRIES})`);
+      
+      setProcessingUpdates(prev => [...prev, {
+        id: Date.now(),
+        status: 'info',
+        message: config.ERROR_MESSAGES.UPLOAD_RETRY,
+        timestamp: new Date().toISOString()
+      }]);
+      
+      // Add a delay before retrying
+      await new Promise(resolve => setTimeout(resolve, config.UPLOAD_CONFIG.RETRY_DELAY));
+      
+      // Retry with the same strategy
+      return uploadChunk(chunkIndex, totalChunks, fileId, commonFormData, headers, uploadedChunks, strategyIndex);
+    }
+  };
+
+  // Handle the main file upload process
+  const handleUpload = async () => {
+    try {
+      if (!file) {
+        setError('Please select a file to upload.');
+        return;
+      }
+      
+      // Reset any previous state
       setError(null);
       setUploading(true);
       setProgress(0);
-      setProcessingUpdates([]); // Clear previous updates
+      setResult(null);
+      setProcessingUpdates([]);
       
-      // Add initial status update
-      setProcessingUpdates([{
-        id: Date.now(),
-        status: 'info',
-        message: 'Starting file processing...',
-        timestamp: new Date().toISOString()
-      }]);
+      // Create a unique session ID for this upload
+      const newSessionId = uuidv4();
+      setSessionId(newSessionId);
       
-      // Generate a unique file ID for this upload to track chunks
-      const fileId = `file_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
-      const totalChunks = Math.ceil(file.size / config.UPLOAD_CONFIG.CHUNK_SIZE);
+      // Initialize WebSocket connection with the session ID
+      // This will allow us to receive processing updates
+      const cleanup = connectSocket();
       
-      setProcessingUpdates(prev => [...prev, {
-        id: Date.now(),
-        status: 'info',
-        message: `Preparing to upload file in ${totalChunks} chunks`,
-        details: `File: ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)} MB)`,
-        timestamp: new Date().toISOString()
-      }]);
+      // Generate a unique file ID for tracking chunks
+      const fileId = uuidv4();
       
-      // Create an array to track successful chunk uploads
-      const uploadedChunks = new Array(totalChunks).fill(false);
+      // Prepare file for chunked upload 
+      const chunkSize = config.UPLOAD_CONFIG.CHUNK_SIZE;
+      const totalChunks = Math.ceil(file.size / chunkSize);
       
-      // Basic request data that's the same for all chunks
+      console.log(`Preparing to upload file in ${totalChunks} chunks`);
+      
+      // Initialize chunks with their data slices
+      const chunks = [];
+      for (let i = 0; i < totalChunks; i++) {
+        const start = i * chunkSize;
+        const end = Math.min(file.size, start + chunkSize);
+        chunks.push({
+          index: i,
+          data: file.slice(start, end),
+          uploaded: false,
+          attempts: 0,
+          progress: 0
+        });
+      }
+      setUploadedChunks(chunks);
+      
+      // Common data for all chunk requests
       const commonFormData = {
+        totalChunks: totalChunks,
+        fileId: fileId,
         fileName: file.name,
         fileType: file.type,
         fileSize: file.size,
-        totalChunks: totalChunks,
-        fileId: fileId
+        sessionId: newSessionId,
+        userId: user?.id || '',
+        meetingTopic: meetingTopic || '',
+        customInstructions: customInstructions || '',
+        evaluationTemplate: evaluationTemplate || '',
+        customEvaluationTemplate: customEvaluationTemplate || ''
       };
       
-      // Add meeting topic if selected
-      if (meetingTopic) {
-        commonFormData.meetingTopic = meetingTopic;
-      }
+      // Common headers for all requests
+      const headers = {
+        'x-user-id': user?.id || '',
+        'x-session-id': newSessionId
+      };
       
-      // Add custom instructions if provided
-      let finalInstructions = customInstructions.trim();
+      console.log('Starting chunked upload with session ID:', newSessionId);
       
-      // If an evaluation template is selected, append it to custom instructions
-      if (evaluationTemplate && customEvaluationTemplate) {
-        // If there are already custom instructions, add the template at the end
-        if (finalInstructions) {
-          finalInstructions += '\n\n=== EVALUATION TEMPLATE ===\n' + customEvaluationTemplate;
-        } else {
-          finalInstructions = customEvaluationTemplate;
-        }
-        
-        // Add template selection update
-        setProcessingUpdates(prev => [...prev, {
-          id: Date.now(),
-          status: 'info',
-          message: `Guider Agent activated with evaluation template: ${
-            EVALUATION_TEMPLATES.find(t => t.value === evaluationTemplate)?.label || 'Custom Template'
-          }`,
-          timestamp: new Date().toISOString()
-        }]);
-      }
-      
-      if (finalInstructions) {
-        commonFormData.customInstructions = finalInstructions;
-      }
-      
-      // Add session ID for WebSocket updates
-      if (sessionId) {
-        commonFormData.sessionId = sessionId;
-      }
-      
-      // Notify about chunked upload process
+      // Log initial upload state
       setProcessingUpdates(prev => [...prev, {
         id: Date.now(),
         status: 'info',
-        message: 'Starting chunked file upload',
-        details: `Large file detected. Upload will be done in ${totalChunks} smaller chunks to prevent timeouts.`,
+        message: `Starting upload of ${file.name} (${formatFileSize(file.size)}) in ${totalChunks} chunks`,
         timestamp: new Date().toISOString()
       }]);
       
-      // Set up headers for all requests - use minimal headers for improved CORS compatibility
-      const headers = {
-        'x-user-id': user.id
-      };
+      // Upload each chunk in parallel with limits
+      const results = await Promise.allSettled(
+        // Create a limited number of concurrent uploads
+        // For large numbers of chunks, we'll process them in smaller batches
+        chunks.map(async (chunk, index) => {
+          // Add a small delay for consecutive chunks to prevent overwhelming the server
+          await new Promise(resolve => setTimeout(resolve, index * 300));
+          
+          // Upload the chunk with all our retry and fallback logic
+          return uploadChunk(index, totalChunks, fileId, commonFormData, headers, chunks);
+        })
+      );
       
-      // Upload chunks sequentially instead of in parallel for more reliability
-      let allSuccessful = true;
-      let failedChunks = [];
-      
-      for (let i = 0; i < totalChunks; i++) {
-        const success = await uploadChunk(i, totalChunks, fileId, commonFormData, headers, uploadedChunks);
-        if (!success) {
-          allSuccessful = false;
-          failedChunks.push(i + 1); // Store 1-indexed chunk numbers for display
-        }
-        
-        // Update the overall progress (factor in the completion phase)
-        const progressPercent = Math.floor(((i + 1) / totalChunks) * 50); // First 50% of total progress
-        setProgress(progressPercent);
-      }
+      // Check if all uploads were successful
+      const allSuccessful = results.every(result => result.status === 'fulfilled');
       
       if (!allSuccessful) {
-        // If we reached this point, all our strategies have failed for some chunks
-        const failedPercentage = (failedChunks.length / totalChunks) * 100;
+        // Find failed chunks
+        const failedChunks = results
+          .map((result, index) => result.status === 'rejected' ? index : null)
+          .filter(index => index !== null);
         
-        // If less than 25% of chunks failed, we might be able to continue
-        if (failedPercentage < 25 && failedChunks.length <= 3) {
-          // Show a warning but try to continue
-          setProcessingUpdates(prev => [...prev, {
-            id: Date.now(),
-            status: 'warning',
-            message: `Some chunks failed (${failedChunks.join(', ')}), but we'll try to proceed`,
-            details: 'The server may be able to process the file even with some missing chunks.',
-            timestamp: new Date().toISOString()
-          }]);
-          
-          // Continue with processing despite some failures
-          allSuccessful = true;
-        } else {
-          // Too many chunks failed, cannot proceed
-          throw new Error(`Multiple chunks failed to upload (${failedChunks.length} out of ${totalChunks}). Please try again later or with a smaller file.`);
+        console.error(`Failed to upload chunks: ${failedChunks.join(', ')}`);
+        
+        // If all chunks failed, throw an error
+        if (failedChunks.length === totalChunks) {
+          throw new Error('All chunks failed to upload.');
         }
-      }
-      
-      // If we got here and all chunks were uploaded successfully, send the completion signal
-      if (allSuccessful) {
-        // Send signal to backend that all chunks are uploaded
+        
+        // If some chunks failed, show a warning but continue
         setProcessingUpdates(prev => [...prev, {
           id: Date.now(),
-          status: 'success',
-          message: 'All chunks uploaded successfully. Starting processing.',
+          status: 'warning',
+          message: `${failedChunks.length} of ${totalChunks} chunks failed to upload. Processing may be incomplete.`,
           timestamp: new Date().toISOString()
         }]);
-        
-        // Try multiple approaches for the completion signal too
-        let completionSuccess = false;
-        let completionAttempt = 0;
-        
-        // Try each fallback strategy for completion
-        while (!completionSuccess && completionAttempt < config.UPLOAD_CONFIG.FALLBACK_STRATEGIES.length) {
-          const strategy = config.UPLOAD_CONFIG.FALLBACK_STRATEGIES[completionAttempt];
-          
-          try {
-            console.log(`Sending completion signal with strategy ${completionAttempt + 1}`);
-            
-            // Tell the server to combine chunks and process the file
-            const completionResponse = await axios.post(`${config.API_URL}/api/upload/complete`, {
-              fileId,
-              fileName: file.name,
-              totalChunks,
-              sessionId,
-              meetingTopic,
-              customInstructions: finalInstructions,
-              userId: user.id
-            }, {
-              headers: {
-                'Content-Type': 'application/json',
-                'x-user-id': user.id
-              },
-              timeout: 30000, // 30 second timeout
-              withCredentials: strategy.withCredentials
-            });
-            
-            // Handle the completion response
-            if (completionResponse.data.success) {
-              completionSuccess = true;
-              
-              // Processing started, now we wait for WebSocket updates
-              setProcessingUpdates(prev => [...prev, {
-                id: Date.now(),
-                status: 'info',
-                message: 'File uploaded successfully, processing has begun.',
-                details: 'You will receive real-time updates as processing progresses.',
-                timestamp: new Date().toISOString()
-              }]);
-              
-              // Don't set uploading to false yet, we're still processing
-              // Don't set result yet, we'll wait for the final WebSocket update
-              setProgress(50); // We're 50% done (upload complete, processing starting)
-            } else {
-              throw new Error(completionResponse.data.message || 'Error starting file processing');
-            }
-          } catch (error) {
-            completionAttempt++;
-            
-            // Log the error but try the next strategy if available
-            console.error(`Error sending completion signal (attempt ${completionAttempt}):`, error.message);
-            
-            if (completionAttempt < config.UPLOAD_CONFIG.FALLBACK_STRATEGIES.length) {
-              setProcessingUpdates(prev => [...prev, {
-                id: Date.now(),
-                status: 'warning',
-                message: 'Error finalizing upload, trying alternative approach...',
-                timestamp: new Date().toISOString()
-              }]);
-              
-              // Wait before trying next strategy
-              await new Promise(resolve => setTimeout(resolve, 2000));
-            } else {
-              throw new Error('Failed to finalize upload after multiple attempts');
-            }
-          }
-        }
-        
-        // If all completion attempts failed, throw an error
-        if (!completionSuccess) {
-          throw new Error('Failed to finalize upload after multiple attempts');
-        }
-      } else {
-        throw new Error('Some chunks failed to upload');
       }
+      
+      // Mark upload as complete and transition to processing phase
+      setProgress(50); // Upload is 50% of the total progress
+      console.log('Chunked upload completed. Waiting for server processing...');
+      
+      // Add a message about successful upload
+      setProcessingUpdates(prev => [...prev, {
+        id: Date.now(),
+        status: 'success',
+        message: 'File upload complete. Processing has begun.',
+        timestamp: new Date().toISOString()
+      }]);
+      
+      // The rest of the processing will be handled via WebSocket updates
+      
+      // Return cleanup function
+      return cleanup;
     } catch (error) {
-      console.error('Upload error:', error);
-      setError(error.message || 'An error occurred during upload');
+      console.error('Upload failed:', error);
+      
       setUploading(false);
       setProgress(0);
       
-      // Add special handling for render.com 502 errors
-      if (error.message?.includes('502') || error.message?.includes('Bad Gateway')) {
-        setProcessingUpdates(prev => [...prev, {
-          id: Date.now(),
-          status: 'error',
-          message: 'Server overloaded (502 Bad Gateway)',
-          details: 'The server is currently experiencing high load or is being restarted. Please try again in a few minutes.',
-          timestamp: new Date().toISOString()
-        }]);
+      // Determine what type of error occurred for better user feedback
+      let errorMessage = 'An error occurred during upload.';
+      
+      if (config.isCorsError(error)) {
+        errorMessage = config.ERROR_MESSAGES.CORS_ERROR;
+      } else if (error.message?.includes('Network Error')) {
+        errorMessage = config.ERROR_MESSAGES.NETWORK_ERROR;
+      } else if (error.response) {
+        // Server returned an error
+        if (error.response.status === 502) {
+          errorMessage = config.ERROR_MESSAGES.BAD_GATEWAY;
+        } else if (error.response.status === 413) {
+          errorMessage = config.ERROR_MESSAGES.FILE_TOO_LARGE;
+        } else if (error.response.status === 404) {
+          errorMessage = config.ERROR_MESSAGES.API_404;
+        } else if (error.response.data?.error) {
+          errorMessage = error.response.data.error;
+        }
+      } else if (error.message) {
+        errorMessage = error.message;
       }
+      
+      setError(errorMessage);
+      
+      // Add error to processing updates
+      setProcessingUpdates(prev => [...prev, {
+        id: Date.now(),
+        status: 'error',
+        message: errorMessage,
+        details: error.stack,
+        timestamp: new Date().toISOString()
+      }]);
     }
   };
 
