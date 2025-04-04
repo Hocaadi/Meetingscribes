@@ -173,6 +173,7 @@ const FileUpload = () => {
   const [evaluationTemplate, setEvaluationTemplate] = useState('');
   const [customEvaluationTemplate, setCustomEvaluationTemplate] = useState('');
   const [showEvaluationOptions, setShowEvaluationOptions] = useState(false);
+  const [uploadedChunks, setUploadedChunks] = useState([]);
   const fileInputRef = useRef(null);
   const [dragActive, setDragActive] = useState(false);
   
