@@ -833,74 +833,190 @@ const FileUpload = () => {
   };
 
   // Upload file chunk with multiple fallback strategies for CORS issues
-  const uploadChunk = async (chunkIndex, totalChunks, fileId, commonFormData, headers, uploadedChunks, strategyIndex = 0) => {
+  const uploadChunk = async (chunkIndex, totalChunks, fileId, commonFormData, headers, uploadedChunks, strategyIndex = 0, isRetry = false) => {
     // Get the appropriate strategy based on the current index
     const strategies = config.UPLOAD_CONFIG.FALLBACK_STRATEGIES;
     const strategy = strategies[strategyIndex] || strategies[0];
     
-    console.log(`Uploading chunk ${chunkIndex + 1}/${totalChunks} (strategy ${strategyIndex + 1}, attempt ${uploadedChunks[chunkIndex].attempts})`);
+    console.log(`Uploading chunk ${chunkIndex + 1}/${totalChunks} (strategy ${strategyIndex + 1}, attempt ${uploadedChunks[chunkIndex].attempts}${isRetry ? ', retry' : ''})`);
     
     try {
       // Prepare URL - use proxy if specified in the strategy
       let uploadUrl = `${config.API_URL}/api/upload/chunk`;
+      
+      // On network errors, try a fallback API URL
+      if (isRetry && config.BACKUP_API_URLS.length > 0) {
+        // Select a fallback URL based on the retry count
+        const fallbackIndex = Math.min(uploadedChunks[chunkIndex].attempts - 1, config.BACKUP_API_URLS.length - 1);
+        uploadUrl = `${config.getFallbackApiUrl(fallbackIndex)}/api/upload/chunk`;
+        console.log(`Using fallback API URL: ${uploadUrl}`);
+      }
+      
       if (strategy.useProxy) {
         uploadUrl = config.getProxyUrl(uploadUrl);
         console.log(`Using CORS proxy for upload: ${uploadUrl}`);
       }
       
-      // Prepare form data with chunk info
-      const formData = new FormData();
-      
-      // Add common form data
-      for (const [key, value] of Object.entries(commonFormData)) {
-        formData.append(key, value);
-      }
-      
-      // Add chunk-specific data
-      formData.append('chunkIndex', chunkIndex);
-      formData.append('totalChunks', totalChunks);
-      formData.append('fileId', fileId);
-      formData.append('chunk', uploadedChunks[chunkIndex].data);
-      
-      // Configure request headers based on strategy
-      const requestConfig = {
-        headers: { ...headers },
-        withCredentials: strategy.withCredentials,
-        timeout: config.UPLOAD_TIMEOUT,
-        onUploadProgress: (progressEvent) => {
-          // Calculate progress for this chunk
-          const chunkProgress = (progressEvent.loaded / progressEvent.total) * 100;
-          
-          // Update progress for this specific chunk
-          const updatedChunks = [...uploadedChunks];
-          updatedChunks[chunkIndex].progress = chunkProgress;
-          setUploadedChunks(updatedChunks);
-          
-          // Calculate overall progress (up to 50% - the rest is for processing)
-          const overallProgress = calculateOverallProgress(updatedChunks) / 2;
-          setProgress(overallProgress);
+      // Use fetch API directly for maximum control when specified in strategy
+      if (strategy.useFetch) {
+        console.log(`Using fetch API directly (bypass axios)`);
+        
+        // Prepare form data with chunk info
+        const formData = new FormData();
+        
+        // Add common form data
+        for (const [key, value] of Object.entries(commonFormData)) {
+          formData.append(key, value);
         }
-      };
-      
-      // If strategy indicates to exclude Content-Type header, delete it
-      // This can help with certain CORS configurations
-      if (!strategy.includeContentType) {
-        delete requestConfig.headers['Content-Type'];
+        
+        // Add chunk-specific data
+        formData.append('chunkIndex', chunkIndex);
+        formData.append('totalChunks', totalChunks);
+        formData.append('fileId', fileId);
+        formData.append('chunk', uploadedChunks[chunkIndex].data);
+        
+        // Setup fetch options
+        const fetchOptions = {
+          method: 'POST',
+          body: formData,
+          credentials: strategy.withCredentials ? 'include' : 'omit',
+          mode: 'cors',
+          headers: {
+            ...headers
+          }
+        };
+        
+        // Remove Content-Type to let browser set it with boundary
+        if (!strategy.includeContentType) {
+          delete fetchOptions.headers['Content-Type'];
+        }
+        
+        // Manual progress tracking using XMLHttpRequest
+        const xhr = new XMLHttpRequest();
+        
+        // Setup a promise that resolves when the request completes
+        const uploadPromise = new Promise((resolve, reject) => {
+          xhr.open('POST', uploadUrl, true);
+          
+          // Add headers
+          Object.keys(fetchOptions.headers).forEach(header => {
+            xhr.setRequestHeader(header, fetchOptions.headers[header]);
+          });
+          
+          // Set credentials mode
+          xhr.withCredentials = strategy.withCredentials;
+          
+          // Setup progress handler
+          xhr.upload.onprogress = (progressEvent) => {
+            if (progressEvent.lengthComputable) {
+              const chunkProgress = (progressEvent.loaded / progressEvent.total) * 100;
+              
+              // Update progress for this specific chunk
+              const updatedChunks = [...uploadedChunks];
+              updatedChunks[chunkIndex].progress = chunkProgress;
+              setUploadedChunks(updatedChunks);
+              
+              // Calculate overall progress (up to 50% - the rest is for processing)
+              const overallProgress = calculateOverallProgress(updatedChunks) / 2;
+              setProgress(overallProgress);
+            }
+          };
+          
+          // Setup completion handlers
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+              try {
+                const response = JSON.parse(xhr.responseText);
+                resolve(response);
+              } catch (err) {
+                resolve({ success: true }); // Assume success even if parsing fails
+              }
+            } else {
+              reject(new Error(`HTTP error ${xhr.status}: ${xhr.statusText}`));
+            }
+          };
+          
+          xhr.onerror = () => {
+            reject(new Error('Network error occurred'));
+          };
+          
+          xhr.ontimeout = () => {
+            reject(new Error('Request timed out'));
+          };
+          
+          // Send the request
+          xhr.send(formData);
+        });
+        
+        // Wait for the upload to complete
+        const response = await uploadPromise;
+        
+        // Mark this chunk as uploaded
+        const updatedChunks = [...uploadedChunks];
+        updatedChunks[chunkIndex].uploaded = true;
+        updatedChunks[chunkIndex].progress = 100;
+        setUploadedChunks(updatedChunks);
+        
+        console.log(`Chunk ${chunkIndex + 1}/${totalChunks} uploaded successfully with fetch API`);
+        
+        // Return response data
+        return response;
+      } else {
+        // Use standard axios approach
+        // Prepare form data with chunk info
+        const formData = new FormData();
+        
+        // Add common form data
+        for (const [key, value] of Object.entries(commonFormData)) {
+          formData.append(key, value);
+        }
+        
+        // Add chunk-specific data
+        formData.append('chunkIndex', chunkIndex);
+        formData.append('totalChunks', totalChunks);
+        formData.append('fileId', fileId);
+        formData.append('chunk', uploadedChunks[chunkIndex].data);
+        
+        // Configure request headers based on strategy
+        const requestConfig = {
+          headers: { ...headers },
+          withCredentials: strategy.withCredentials,
+          timeout: config.UPLOAD_TIMEOUT,
+          onUploadProgress: (progressEvent) => {
+            // Calculate progress for this chunk
+            const chunkProgress = (progressEvent.loaded / progressEvent.total) * 100;
+            
+            // Update progress for this specific chunk
+            const updatedChunks = [...uploadedChunks];
+            updatedChunks[chunkIndex].progress = chunkProgress;
+            setUploadedChunks(updatedChunks);
+            
+            // Calculate overall progress (up to 50% - the rest is for processing)
+            const overallProgress = calculateOverallProgress(updatedChunks) / 2;
+            setProgress(overallProgress);
+          }
+        };
+        
+        // If strategy indicates to exclude Content-Type header, delete it
+        // This can help with certain CORS configurations
+        if (!strategy.includeContentType) {
+          delete requestConfig.headers['Content-Type'];
+        }
+        
+        // Send the upload request
+        const response = await axios.post(uploadUrl, formData, requestConfig);
+        
+        // Mark this chunk as uploaded
+        const updatedChunks = [...uploadedChunks];
+        updatedChunks[chunkIndex].uploaded = true;
+        updatedChunks[chunkIndex].progress = 100;
+        setUploadedChunks(updatedChunks);
+        
+        console.log(`Chunk ${chunkIndex + 1}/${totalChunks} uploaded successfully`);
+        
+        // Return response data
+        return response.data;
       }
-      
-      // Send the upload request
-      const response = await axios.post(uploadUrl, formData, requestConfig);
-      
-      // Mark this chunk as uploaded
-      const updatedChunks = [...uploadedChunks];
-      updatedChunks[chunkIndex].uploaded = true;
-      updatedChunks[chunkIndex].progress = 100;
-      setUploadedChunks(updatedChunks);
-      
-      console.log(`Chunk ${chunkIndex + 1}/${totalChunks} uploaded successfully`);
-      
-      // Return response data
-      return response.data;
     } catch (error) {
       console.error(`Error uploading chunk ${chunkIndex + 1}/${totalChunks}:`, error);
       
@@ -909,17 +1025,18 @@ const FileUpload = () => {
       updatedChunks[chunkIndex].attempts += 1;
       setUploadedChunks(updatedChunks);
       
-      // Check if it's a CORS error
+      // Check if it's a CORS error or network error
       const isCors = config.isCorsError(error);
+      const isNetworkError = error.message?.includes('Network Error');
       
-      // If it's a CORS error or 502, try the next strategy if available
-      if ((isCors || error?.response?.status === 502) && strategyIndex < strategies.length - 1) {
-        console.log(`CORS or server error detected. Trying next upload strategy (${strategyIndex + 2}/${strategies.length})`);
+      // If it's a CORS error or network error, try the next strategy if available
+      if ((isCors || isNetworkError) && strategyIndex < strategies.length - 1) {
+        console.log(`CORS or network error detected. Trying next upload strategy (${strategyIndex + 2}/${strategies.length})`);
         
         setProcessingUpdates(prev => [...prev, {
           id: Date.now(),
           status: 'warning',
-          message: config.ERROR_MESSAGES.CORS_ISSUE,
+          message: isNetworkError ? 'Network error detected. Trying alternative approach...' : config.ERROR_MESSAGES.CORS_ISSUE,
           timestamp: new Date().toISOString()
         }]);
         
@@ -927,7 +1044,25 @@ const FileUpload = () => {
         await new Promise(resolve => setTimeout(resolve, 1000));
         
         // Try the next strategy
-        return uploadChunk(chunkIndex, totalChunks, fileId, commonFormData, headers, uploadedChunks, strategyIndex + 1);
+        return uploadChunk(chunkIndex, totalChunks, fileId, commonFormData, headers, uploadedChunks, strategyIndex + 1, false);
+      }
+      
+      // For network errors on the current strategy, try a fallback API URL
+      if (isNetworkError && !isRetry) {
+        console.log(`Network error detected. Trying fallback API URL...`);
+        
+        setProcessingUpdates(prev => [...prev, {
+          id: Date.now(),
+          status: 'warning',
+          message: 'Network error detected. Trying fallback server...',
+          timestamp: new Date().toISOString()
+        }]);
+        
+        // Add a delay before retrying
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        // Retry with the same strategy but using a fallback URL
+        return uploadChunk(chunkIndex, totalChunks, fileId, commonFormData, headers, uploadedChunks, strategyIndex, true);
       }
       
       // For server errors, add retry delay
@@ -955,7 +1090,7 @@ const FileUpload = () => {
       await new Promise(resolve => setTimeout(resolve, config.UPLOAD_CONFIG.RETRY_DELAY));
       
       // Retry with the same strategy
-      return uploadChunk(chunkIndex, totalChunks, fileId, commonFormData, headers, uploadedChunks, strategyIndex);
+      return uploadChunk(chunkIndex, totalChunks, fileId, commonFormData, headers, uploadedChunks, strategyIndex, false);
     }
   };
 

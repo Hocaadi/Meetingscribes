@@ -33,20 +33,19 @@ console.log('Starting MeetingScribe backend server...');
 // Configure Socket.io using our abstracted config
 const io = setupSocketIO(server);
 
-// Apply CORS middleware globally - using centralized corsOptions
-app.use(cors(corsOptions));
-
-// Add explicitly permissive CORS for all API routes
-app.use('/api', (req, res, next) => {
-  const origin = req.headers.origin;
-  // Always set CORS headers for API routes
-  res.header('Access-Control-Allow-Origin', origin || '*');
+// Apply CORS middleware globally with maximum permissiveness for production deployments
+app.use((req, res, next) => {
+  // Get origin from request or allow all (*) as fallback
+  const origin = req.headers.origin || '*';
+  
+  // Set permissive CORS headers for all routes
+  res.header('Access-Control-Allow-Origin', origin);
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-user-id, x-session-id');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-user-id, x-session-id');
   res.header('Access-Control-Allow-Credentials', 'true');
-  res.header('Access-Control-Max-Age', '86400');
+  res.header('Access-Control-Max-Age', '86400'); // 24 hours
   
-  // For OPTIONS requests, return immediately
+  // Handle preflight OPTIONS requests immediately
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
@@ -54,22 +53,8 @@ app.use('/api', (req, res, next) => {
   next();
 });
 
-// Add explicit permissive CORS for socket.io routes
-app.use('/socket.io', (req, res, next) => {
-  const origin = req.headers.origin;
-  // Always set CORS headers for socket.io
-  res.header('Access-Control-Allow-Origin', origin || '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-user-id, x-session-id');
-  res.header('Access-Control-Allow-Credentials', 'true');
-  
-  // For OPTIONS requests, return immediately
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
-  
-  next();
-});
+// Original CORS middleware still in place as backup
+app.use(cors(corsOptions));
 
 // Set longer timeouts for upload requests
 app.use((req, res, next) => {
@@ -161,14 +146,32 @@ if (!fs.existsSync(indexHtmlPath)) {
 // Configure multer for file uploads
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    const uploadDir = path.join(__dirname, 'uploads');
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
+    try {
+      const uploadDir = path.join(__dirname, 'uploads');
+      // Check if uploads directory exists, create if not
+      if (!fs.existsSync(uploadDir)) {
+        fs.mkdirSync(uploadDir, { recursive: true });
+        console.log(`Created uploads directory: ${uploadDir}`);
+      }
+      cb(null, uploadDir);
+    } catch (error) {
+      console.error('Error in multer destination function:', error);
+      // Provide a fallback directory in case of error
+      const fallbackDir = path.join(__dirname, '.');
+      console.warn(`Using fallback directory: ${fallbackDir}`);
+      cb(null, fallbackDir);
     }
-    cb(null, uploadDir);
   },
   filename: (req, file, cb) => {
-    cb(null, `${Date.now()}-${file.originalname}`);
+    try {
+      // Create a safe filename with timestamp prefix
+      const safeFilename = `${Date.now()}-${file.originalname.replace(/[^a-zA-Z0-9_.-]/g, '_')}`;
+      cb(null, safeFilename);
+    } catch (error) {
+      console.error('Error in multer filename function:', error);
+      // Use a simple timestamp as fallback filename
+      cb(null, `${Date.now()}-file`);
+    }
   }
 });
 
@@ -329,10 +332,57 @@ const authMiddleware = async (req, res, next) => {
 app.use(authMiddleware);
 
 // API routes
-app.post('/api/upload', upload.single('audioFile'), async (req, res) => {
-  // Set a longer timeout for this specific route
-  req.setTimeout(600000); // 10 minutes
-  
+app.post('/api/upload', (req, res, next) => {
+  // Wrap the multer middleware in a try/catch to handle any errors
+  try {
+    // Set a longer timeout for this specific route
+    req.setTimeout(600000); // 10 minutes
+    
+    // Custom error handling for multer
+    const uploadMiddleware = upload.single('audioFile');
+    uploadMiddleware(req, res, (err) => {
+      if (err) {
+        console.error('Multer error during upload:', err);
+        
+        // Handle specific error types
+        if (err instanceof multer.MulterError) {
+          if (err.code === 'LIMIT_FILE_SIZE') {
+            return res.status(413).json({ 
+              error: 'File too large', 
+              details: `Maximum file size is ${upload.limits.fileSize / (1024 * 1024)}MB` 
+            });
+          } else {
+            return res.status(400).json({ 
+              error: 'File upload error', 
+              code: err.code,
+              details: err.message 
+            });
+          }
+        }
+        
+        // For all other errors
+        return res.status(500).json({ 
+          error: 'File upload failed', 
+          details: err.message,
+          stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+        });
+      }
+      
+      // Continue with regular handler after successful upload
+      handleFileUpload(req, res);
+    });
+  } catch (err) {
+    console.error('Catastrophic error in upload handler:', err);
+    return res.status(500).json({ 
+      error: 'Server error during upload', 
+      details: err.message,
+      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+    });
+  }
+});
+
+// Handler function for file upload processing
+async function handleFileUpload(req, res) {
   try {
     if (!req.file) {
       console.error('Error: No file uploaded');
@@ -497,7 +547,7 @@ app.post('/api/upload', upload.single('audioFile'), async (req, res) => {
     console.error('Unhandled error in upload endpoint:', error);
     return res.status(500).json({ error: 'Server error', details: error.message });
   }
-});
+}
 
 // Route to download the processed document
 app.get(['/api/download/:fileName', '/download/:fileName'], (req, res) => {
@@ -747,7 +797,25 @@ const ongoingUploads = new Map();
 // Configure multer for chunk uploads
 const chunkStorage = multer.diskStorage({
   destination: (req, file, cb) => {
-    const fileId = req.body.fileId;
+    // Ensure fileId is a string, handling array or undefined cases
+    let fileId = req.body.fileId;
+    
+    // If fileId is an array, take the first element
+    if (Array.isArray(fileId)) {
+      console.log('Warning: fileId is an array, using first element');
+      fileId = fileId[0];
+    }
+    
+    // If fileId is still undefined, generate a random one
+    if (!fileId) {
+      fileId = `temp-${Date.now()}-${Math.random().toString(36).substring(2, 10)}`;
+      console.log('Warning: fileId is undefined, using generated ID:', fileId);
+    }
+    
+    // Make sure fileId is a valid string for file paths (no special characters)
+    fileId = fileId.toString().replace(/[^a-zA-Z0-9_-]/g, '');
+    
+    // Create the directory path
     const chunkDir = path.join(chunksDir, fileId);
     
     if (!fs.existsSync(chunkDir)) {
@@ -757,7 +825,17 @@ const chunkStorage = multer.diskStorage({
     cb(null, chunkDir);
   },
   filename: (req, file, cb) => {
-    const chunkIndex = req.body.chunkIndex || 0;
+    // Ensure chunkIndex is a valid number or default to 0
+    let chunkIndex = req.body.chunkIndex;
+    
+    // Handle array cases
+    if (Array.isArray(chunkIndex)) {
+      chunkIndex = chunkIndex[0];
+    }
+    
+    // Convert to number or default to 0
+    chunkIndex = parseInt(chunkIndex) || 0;
+    
     cb(null, `chunk-${chunkIndex}`);
   }
 });
@@ -790,43 +868,61 @@ app.post('/api/upload/chunk', uploadChunk.single('chunk'), (req, res) => {
   }
   
   try {
-    const { fileId, fileName, fileType, totalChunks, chunkIndex } = req.body;
+    // Safely extract form fields, handling array values
+    const getFormField = (field) => {
+      const value = req.body[field];
+      if (Array.isArray(value)) return value[0];
+      return value;
+    };
     
-    if (!fileId || !fileName || !chunkIndex) {
+    // Extract form fields with proper type handling
+    const fileId = getFormField('fileId');
+    const fileName = getFormField('fileName');
+    const fileType = getFormField('fileType');
+    const totalChunks = parseInt(getFormField('totalChunks')) || 0;
+    const chunkIndex = parseInt(getFormField('chunkIndex')) || 0;
+    const sessionId = getFormField('sessionId');
+    const meetingTopic = getFormField('meetingTopic');
+    const customInstructions = getFormField('customInstructions');
+    
+    if (!fileId || !fileName || chunkIndex === undefined) {
       return res.status(400).json({ 
         success: false,
         message: 'Missing required chunk information'
       });
     }
     
+    // Log the request details for debugging
+    console.log(`Processing chunk upload: fileId=${fileId}, chunkIndex=${chunkIndex}/${totalChunks}, fileName=${fileName}`);
+    
     // Get/create upload tracking info
     if (!ongoingUploads.has(fileId)) {
       ongoingUploads.set(fileId, {
         fileName,
         fileType,
-        totalChunks: parseInt(totalChunks),
-        uploadedChunks: new Array(parseInt(totalChunks)).fill(false),
+        totalChunks: totalChunks,
+        uploadedChunks: new Array(totalChunks).fill(false),
         chunkCount: 0,
         createdAt: new Date(),
-        sessionId: req.body.sessionId,
-        meetingTopic: req.body.meetingTopic,
-        customInstructions: req.body.customInstructions,
+        sessionId: sessionId,
+        meetingTopic: meetingTopic,
+        customInstructions: customInstructions,
         userId: req.headers['x-user-id'] || 'anonymous'
       });
     }
     
     // Update upload status with this chunk
     const uploadInfo = ongoingUploads.get(fileId);
-    uploadInfo.uploadedChunks[parseInt(chunkIndex)] = true;
+    uploadInfo.uploadedChunks[chunkIndex] = true;
     uploadInfo.chunkCount++;
     
-    console.log(`Received chunk ${parseInt(chunkIndex) + 1}/${totalChunks} for file ${fileName} (ID: ${fileId})`);
+    console.log(`Received chunk ${chunkIndex + 1}/${totalChunks} for file ${fileName} (ID: ${fileId})`);
     
     return res.status(200).json({
       success: true,
-      message: `Chunk ${parseInt(chunkIndex) + 1}/${totalChunks} received`,
+      message: `Chunk ${chunkIndex + 1}/${totalChunks} received`,
       chunksReceived: uploadInfo.chunkCount,
-      remainingChunks: parseInt(totalChunks) - uploadInfo.chunkCount
+      remainingChunks: totalChunks - uploadInfo.chunkCount
     });
   } catch (error) {
     console.error('Error handling chunk upload:', error);
@@ -864,8 +960,21 @@ app.post('/api/upload/complete', async (req, res) => {
   }
   
   try {
-    const { fileId, fileName, totalChunks, sessionId, meetingTopic, customInstructions } = req.body;
-    const userId = req.headers['x-user-id'] || req.body.userId || 'anonymous';
+    // Safely extract form fields, handling array values
+    const getFormField = (field) => {
+      const value = req.body[field];
+      if (Array.isArray(value)) return value[0];
+      return value;
+    };
+    
+    // Extract form fields with proper type handling
+    const fileId = getFormField('fileId');
+    const fileName = getFormField('fileName');
+    const totalChunks = parseInt(getFormField('totalChunks')) || 0;
+    const sessionId = getFormField('sessionId');
+    const meetingTopic = getFormField('meetingTopic');
+    const customInstructions = getFormField('customInstructions');
+    const userId = req.headers['x-user-id'] || getFormField('userId') || 'anonymous';
     
     if (!fileId || !fileName) {
       return res.status(400).json({
@@ -873,6 +982,9 @@ app.post('/api/upload/complete', async (req, res) => {
         message: 'Missing file information'
       });
     }
+    
+    // Log the completion details for debugging
+    console.log(`Processing upload completion: fileId=${fileId}, totalChunks=${totalChunks}, fileName=${fileName}`);
     
     // Verify this upload exists and all chunks were received
     if (!ongoingUploads.has(fileId)) {
@@ -885,7 +997,7 @@ app.post('/api/upload/complete', async (req, res) => {
     const uploadInfo = ongoingUploads.get(fileId);
     const receivedChunks = uploadInfo.uploadedChunks.filter(Boolean).length;
     
-    if (receivedChunks !== parseInt(totalChunks)) {
+    if (receivedChunks !== totalChunks) {
       return res.status(400).json({
         success: false,
         message: `Not all chunks received. Got ${receivedChunks}/${totalChunks} chunks.`
@@ -899,10 +1011,15 @@ app.post('/api/upload/complete', async (req, res) => {
     const outputFilePath = path.join(__dirname, 'uploads', `${Date.now()}_${fileName}`);
     const outputStream = fs.createWriteStream(outputFilePath);
     
-    for (let i = 0; i < parseInt(totalChunks); i++) {
+    for (let i = 0; i < totalChunks; i++) {
       const chunkPath = path.join(chunkDir, `chunk-${i}`);
-      const chunkBuffer = fs.readFileSync(chunkPath);
-      outputStream.write(chunkBuffer);
+      // Check if the chunk file exists before reading
+      if (fs.existsSync(chunkPath)) {
+        const chunkBuffer = fs.readFileSync(chunkPath);
+        outputStream.write(chunkBuffer);
+      } else {
+        console.error(`Missing chunk file: ${chunkPath}`);
+      }
     }
     
     outputStream.end();
