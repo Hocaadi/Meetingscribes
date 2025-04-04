@@ -500,6 +500,13 @@ export const AuthProvider = ({ children }) => {
       setLoading(true);
       console.log('Signing out user');
       
+      // Call the AuthService to sign out from Supabase
+      const { error } = await supabase.auth.signOut();
+      if (error) {
+        console.error('Supabase signOut error:', error);
+        throw error;
+      }
+      
       // Clear user and session states
       setUser(null);
       setSession(null);
