@@ -898,9 +898,35 @@ const FileUpload = () => {
         const uploadPromise = new Promise((resolve, reject) => {
           xhr.open('POST', uploadUrl, true);
           
-          // Add headers
+          // Add headers with proper filtering of restricted headers
+          const restrictedHeaders = [
+            'accept-charset',
+            'accept-encoding',
+            'access-control-request-headers',
+            'access-control-request-method',
+            'connection',
+            'content-length',
+            'cookie',
+            'cookie2',
+            'date',
+            'dnt',
+            'expect',
+            'host',
+            'keep-alive',
+            'origin',
+            'referer',
+            'te',
+            'trailer',
+            'transfer-encoding',
+            'upgrade',
+            'via'
+          ];
+
           Object.keys(fetchOptions.headers).forEach(header => {
-            xhr.setRequestHeader(header, fetchOptions.headers[header]);
+            // Skip restricted headers that browsers don't allow JavaScript to set
+            if (!restrictedHeaders.includes(header.toLowerCase())) {
+              xhr.setRequestHeader(header, fetchOptions.headers[header]);
+            }
           });
           
           // Set credentials mode
