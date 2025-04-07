@@ -161,94 +161,286 @@ const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
 const MAX_CHUNK_RETRIES = 3;
 
 const FileUpload = () => {
-  // States for file upload
+  // State variables
   const [file, setFile] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
-  const [customInstructions, setCustomInstructions] = useState('');
-  const [showCustomInstructions, setShowCustomInstructions] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
+  const [processingUpdates, setProcessingUpdates] = useState([]);
+  const [uploadStrategy, setUploadStrategy] = useState('auto');
+  const [socketStatus, setSocketStatus] = useState('disconnected');
   const [meetingTopic, setMeetingTopic] = useState('');
-  const [evaluationTemplate, setEvaluationTemplate] = useState('');
+  const [customInstructions, setCustomInstructions] = useState('');
+  const [evaluationTemplate, setEvaluationTemplate] = useState('default');
   const [customEvaluationTemplate, setCustomEvaluationTemplate] = useState('');
   const [showEvaluationOptions, setShowEvaluationOptions] = useState(false);
+  const [showCustomInstructions, setShowCustomInstructions] = useState(false);
+  const [showChat, setShowChat] = useState(false);
+  const [transcriptionModel, setTranscriptionModel] = useState(null);
+  const [analysisModel, setAnalysisModel] = useState(null);
+  const [transcript, setTranscript] = useState('');
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  const [transcriptAvailable, setTranscriptAvailable] = useState(false);
+  const [showTranscript, setShowTranscript] = useState(false);
+  const [upgradePlan, setUpgradePlan] = useState('yearly');
   const [uploadedChunks, setUploadedChunks] = useState([]);
-  const fileInputRef = useRef(null);
-  const [dragActive, setDragActive] = useState(false);
+  const [sessionId, setSessionId] = useState(() => uuidv4());
+  const [requestStatus, setRequestStatus] = useState(null);
   
-  // WebSocket related state
-  const [socket, setSocket] = useState(null);
-  const [sessionId, setSessionId] = useState(() => {
-    // Try to get existing session ID from localStorage
-    const savedSessionId = localStorage.getItem('sessionId');
-    return savedSessionId || uuidv4();
-  });
-  const [processingUpdates, setProcessingUpdates] = useState([]);
-  const [transcriptionModel, setTranscriptionModel] = useState('');
-  const [analysisModel, setAnalysisModel] = useState('');
-  const [socketStatus, setSocketStatus] = useState('disconnected');
+  // References to maintain values across renders
+  const socketRef = useRef(null);
+  const fileInputRef = useRef(null);
   const reconnectAttemptsRef = useRef(0);
   const maxReconnectAttempts = 5;
-  // Add refs to prevent dependency cycle in useEffect
-  const socketRef = useRef(null);
+  const fileIdRef = useRef(null);
+  const uploadStartTimeRef = useRef(null);
+  const lastProgressUpdateRef = useRef(null);
+  const lastPollTimeRef = useRef(null);
+  const pollingIntervalRef = useRef(null);
+  const consecutiveFailuresRef = useRef(0);
   const socketStatusRef = useRef('disconnected');
   
-  // Add transcript state to store the transcript text
-  const [transcript, setTranscript] = useState('');
-  const [showChat, setShowChat] = useState(false);
-  
-  // User related state
-  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
-  const [usageData, setUsageData] = useState(null);
-  const { isLoaded, isSignedIn, user } = useUser();
-  
-  // Debug - log component state on init
+  // Auth context
+  const { isSignedIn, isLoaded, user } = useUser();
+
+  // Utility function to format file size
+  const formatFileSize = (bytes) => {
+    if (bytes === 0) return '0 Bytes';
+    
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
+  // Initialize socket connection
   useEffect(() => {
-    console.log('Dashboard component initialized');
-    
-    // Reset any potentially problematic state
-    if (document.querySelector('.dashboard-container') === null) {
-      console.error('Dashboard container not found in the DOM');
-    }
-    
-    if (document.querySelector('.upload-box') === null) {
-      console.error('Upload box not found in the DOM');
-    }
-    
-    // Force rendering of UI elements if they've been hidden
-    const forceRerender = () => {
-      setShowCustomInstructions(false);
-      setShowEvaluationOptions(false);
+    // Create socket connection
+    const initSocket = () => {
+      const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:5000';
       
-      // Reset any CSS issues
-      const dashboard = document.querySelector('.dashboard-container');
-      if (dashboard) {
-        dashboard.style.display = 'block';
-        dashboard.style.visibility = 'visible';
-        dashboard.style.opacity = '1';
+      // Close existing socket if it exists
+      if (socketRef.current) {
+        socketRef.current.close();
       }
       
-      const uploadBox = document.querySelector('.upload-box');
-      if (uploadBox) {
-        uploadBox.style.display = 'flex';
-        uploadBox.style.visibility = 'visible';
-      }
-      
-      const optionCards = document.querySelectorAll('.option-card');
-      optionCards.forEach(card => {
-        card.style.display = 'block';
-        card.style.visibility = 'visible';
+      // Create new socket instance with basic configuration
+      const socket = io(apiUrl, {
+        query: { sessionId },
+        reconnection: true,
+        reconnectionAttempts: maxReconnectAttempts,
+        reconnectionDelay: 1000,
+        timeout: 10000
       });
+      
+      // Basic event handlers
+      socket.on('connect', () => {
+        console.log('Socket connected:', socket.id);
+        setSocketStatus('connected');
+        socketStatusRef.current = 'connected';
+        
+        // Register for updates if we have a fileId (resuming upload)
+        if (fileIdRef.current && uploading) {
+          socket.emit('register_for_updates', { fileId: fileIdRef.current });
+        }
+      });
+      
+      socket.on('disconnect', (reason) => {
+        console.log('Socket disconnected:', reason);
+        setSocketStatus('disconnected');
+        socketStatusRef.current = 'disconnected';
+        
+        // If disconnection during upload, show message
+        if (uploading) {
+          setProcessingUpdates(prev => [...prev, {
+            id: Date.now(),
+            status: 'warning',
+            message: `Connection lost: ${reason}. Attempting to reconnect...`,
+            timestamp: new Date().toISOString()
+          }]);
+        }
+      });
+      
+      socket.on('reconnect_attempt', (attempt) => {
+        console.log(`Socket reconnection attempt ${attempt}`);
+        setSocketStatus('connecting');
+        socketStatusRef.current = 'connecting';
+      });
+      
+      socket.on('reconnect', (attempt) => {
+        console.log(`Socket reconnected after ${attempt} attempts`);
+        setSocketStatus('connected');
+        socketStatusRef.current = 'connected';
+        
+        // Re-register for updates if needed
+        if (fileIdRef.current && uploading) {
+          socket.emit('register_for_updates', { fileId: fileIdRef.current });
+        }
+      });
+      
+      socket.on('reconnect_failed', () => {
+        console.log('Socket reconnection failed');
+        setSocketStatus('error');
+        socketStatusRef.current = 'error';
+        
+        // Switch to polling if we have a file being processed
+        if (fileIdRef.current && uploading) {
+          startPollingForUpdates(fileIdRef.current);
+        }
+      });
+      
+      // Handle processing updates
+      socket.on('processing_update', (data) => {
+        console.log('Received processing update:', data);
+        lastProgressUpdateRef.current = Date.now();
+        
+        // Store fileId for reconnection needs
+        if (data.fileId) {
+          fileIdRef.current = data.fileId;
+        }
+        
+        // Parse progress if it's a string
+        let progressValue = data.progress;
+        if (typeof progressValue === 'string') {
+          try {
+            progressValue = parseInt(progressValue, 10);
+          } catch (e) {
+            progressValue = undefined;
+          }
+        }
+        
+        // Handle different processing statuses
+        if (data.status === 'processing') {
+          // Update progress if provided
+          if (progressValue !== undefined && !isNaN(progressValue)) {
+            // Scale progress to 50-100 range (upload was 0-50)
+            const scaledProgress = 50 + (progressValue / 2);
+            setProgress(Math.min(scaledProgress, 99)); // Cap at 99% until complete
+          }
+          
+          // Add the update to our log with a unique ID
+          setProcessingUpdates(prev => [...prev, {
+            id: Date.now(),
+            ...data,
+            timestamp: new Date().toISOString()
+          }]);
+        }
+        else if (data.status === 'completed') {
+          // Upload completed
+          setUploading(false);
+          setProgress(100);
+          
+          // Format the result data
+          const resultData = {
+            message: 'Processing completed successfully',
+            fileName: data.fileName || 'processed_file.docx',
+            reportUrl: data.reportUrl || (data.fileId ? `/api/download/${data.fileId}` : null),
+            format: data.format || 'docx'
+          };
+          
+          setResult(resultData);
+          
+          // Store transcript if available
+          if (data.transcript) {
+            setTranscript(data.transcript);
+            setTranscriptAvailable(true);
+          }
+          
+          // Clear polling if it was active
+          if (pollingIntervalRef.current) {
+            clearInterval(pollingIntervalRef.current);
+            pollingIntervalRef.current = null;
+          }
+          
+          // Add completion message
+          setProcessingUpdates(prev => [...prev, {
+            id: Date.now(),
+            status: 'success',
+            message: 'Processing completed successfully! You can now download your results.',
+            timestamp: new Date().toISOString()
+          }]);
+        }
+        else if (data.status === 'error') {
+          // Handle errors
+          setUploading(false);
+          setError(data.error || 'An error occurred during processing');
+          
+          // Add error message
+          setProcessingUpdates(prev => [...prev, {
+            id: Date.now(),
+            status: 'error',
+            message: data.error || 'An error occurred during processing',
+            timestamp: new Date().toISOString()
+          }]);
+          
+          // Clear polling if it was active
+          if (pollingIntervalRef.current) {
+            clearInterval(pollingIntervalRef.current);
+            pollingIntervalRef.current = null;
+          }
+        }
+        else if (data.status === 'chunk_processing') {
+          // Update chunk progress
+          if (data.chunkIndex !== undefined && data.chunkProgress !== undefined) {
+            // Update chunk progress
+            setUploadedChunks(prev => {
+              const newChunks = [...prev];
+              if (newChunks[data.chunkIndex]) {
+                newChunks[data.chunkIndex].progress = data.chunkProgress;
+              }
+              return newChunks;
+            });
+            
+            // Calculate overall progress (0-50 for upload + scaled 0-50 for processing)
+            const overallProgress = 50 + ((progressValue || 0) / 2);
+            setProgress(Math.min(overallProgress, 99));
+          }
+          
+          // Add to updates log
+          setProcessingUpdates(prev => [...prev, {
+            id: Date.now(),
+            ...data,
+            timestamp: new Date().toISOString()
+          }]);
+        }
+        else {
+          // Handle any other status updates
+          console.log("Unhandled processing status:", data.status);
+          
+          // Add to updates log
+          setProcessingUpdates(prev => [...prev, {
+            id: Date.now(),
+            ...data,
+            timestamp: new Date().toISOString()
+          }]);
+        }
+      });
+      
+      // Simple heartbeat check
+      const heartbeatInterval = setInterval(() => {
+        if (socket.connected) {
+          socket.emit('ping');
+        }
+      }, 30000);
+      
+      // Store the socket and clear interval on cleanup
+      socketRef.current = socket;
+      
+      return () => {
+        clearInterval(heartbeatInterval);
+        socket.disconnect();
+      };
     };
     
-    // Call force rerender once
-    forceRerender();
+    // Initialize the socket
+    const cleanup = initSocket();
     
-    // Schedule it to run again after a slight delay in case of async rendering issues
-    const timeout = setTimeout(forceRerender, 50000);
-    return () => clearTimeout(timeout);
-  }, []);
+    // Cleanup on unmount
+    return cleanup;
+  }, [sessionId, uploading]);
   
   // Fetch user request status on component mount or when user changes
   useEffect(() => {
@@ -266,7 +458,7 @@ const FileUpload = () => {
         }
       });
       
-      setUsageData(response.data);
+      setRequestStatus(response.data);
       
       // Show upgrade modal if user has exceeded limit
       if (response.data.upgradeRequired) {
@@ -277,552 +469,115 @@ const FileUpload = () => {
     }
   };
   
-  // Clean up all resources when component unmounts
-  useEffect(() => {
-    return () => {
-      console.log('Component unmounting - cleaning up all resources');
-      
-      // Clean up socket connection
-      if (socketRef.current) {
-        console.log('Disconnecting socket on component unmount');
-        socketRef.current.disconnect();
-        socketRef.current = null;
-      }
-      
-      // Clear any pending intervals or timeouts
-      reconnectAttemptsRef.current = maxReconnectAttempts; // Prevent reconnection attempts
-    };
-  }, []); // Empty dependency array means this runs only on mount/unmount
-  
-  // Helper function to set up socket connection
-  const connectSocket = () => {
-    // Update both state and ref
-    setSocketStatus('connecting');
-    socketStatusRef.current = 'connecting';
+  // Start polling for updates when WebSocket fails
+  const startPollingForUpdates = (fileId) => {
+    console.log("Starting polling for updates on file:", fileId);
     
-    // Set up a reconnect counter
-    let reconnectCount = 0;
-    const maxReconnects = 5;
+    // Clear any existing polling
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+    }
     
-    // Track which config we're using
-    let currentConfigIndex = 0;
+    // Set last poll time
+    lastPollTimeRef.current = Date.now();
     
-    // Function to attempt socket connection with different strategies
-    const attemptConnection = (configIndex = 0) => {
+    // Add message about polling
+    setProcessingUpdates(prev => [...prev, {
+      id: Date.now(),
+      status: 'info',
+      message: 'Switched to polling for processing updates',
+      timestamp: new Date().toISOString()
+    }]);
+    
+    // Poll every 5 seconds
+    pollingIntervalRef.current = setInterval(async () => {
       try {
-        // Get the current connection config to try
-        const currentConfig = configIndex === 0 ? 
-          config.SOCKET_CONFIG : 
-          config.SOCKET_FALLBACK_CONFIGS[configIndex - 1] || config.SOCKET_CONFIG;
+        const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+        const response = await axios.get(`${apiUrl}/api/processing-status/${fileId}`);
         
-        console.log(`Attempting socket connection with config #${configIndex}:`, currentConfig);
+        // Update last poll time
+        lastPollTimeRef.current = Date.now();
+        consecutiveFailuresRef.current = 0;
         
-        // Add session ID to the config
-        const socketOptions = {
-          ...currentConfig,
-          query: { sessionId }
-        };
+        // Process the update from polling
+        processUpdate(response.data);
         
-        // Try different API URLs if needed
-        let apiUrl = config.API_URL;
-        if (configIndex > 2 && config.BACKUP_API_URLS.length > 0) {
-          // Try backup URLs for later attempts
-          const backupIndex = Math.min(configIndex - 3, config.BACKUP_API_URLS.length - 1);
-          apiUrl = config.BACKUP_API_URLS[backupIndex];
-          console.log(`Trying backup API URL: ${apiUrl}`);
+        // If processing is complete, stop polling
+        if (response.data.status === 'completed' || response.data.status === 'error') {
+          clearInterval(pollingIntervalRef.current);
+          pollingIntervalRef.current = null;
         }
+      } catch (error) {
+        console.error("Error polling for updates:", error);
         
-        // Try with proxy as last resort
-        if (configIndex > config.SOCKET_FALLBACK_CONFIGS.length + 2) {
-          apiUrl = config.getProxyUrl(apiUrl);
-          console.log(`Trying with CORS proxy: ${apiUrl}`);
-        }
+        // Track consecutive failures
+        consecutiveFailuresRef.current++;
         
-        const newSocket = io(apiUrl, socketOptions);
-        
-        // Set up connection error handler
-        newSocket.on('connect_error', (error) => {
-          console.error('WebSocket connection error:', error);
-          reconnectCount++;
+        // After 3 consecutive failures, stop polling
+        if (consecutiveFailuresRef.current >= 3) {
+          clearInterval(pollingIntervalRef.current);
+          pollingIntervalRef.current = null;
           
-          if (reconnectCount >= maxReconnects) {
-            console.log('Max reconnect attempts reached with current config');
-            
-            // Try next configuration approach
-            currentConfigIndex++;
-            
-            // If we've tried all configs, fall back to HTTP polling
-            if (currentConfigIndex > config.SOCKET_FALLBACK_CONFIGS.length + 3) {
-              console.log('All connection strategies failed, falling back to HTTP polling');
-              setSocketStatus('error');
-              socketStatusRef.current = 'error';
-              setupPollingFallback();
-              
-              // Suppress further reconnection attempts
-              newSocket.io.reconnection(false);
-              return;
-            }
-            
-            // Try the next configuration
-            console.log(`Trying connection config #${currentConfigIndex}`);
-            newSocket.disconnect();
-            reconnectCount = 0;
-            return attemptConnection(currentConfigIndex);
-          }
-        });
-        
-        // Set up successful connection handler
-        newSocket.on('connect', () => {
-          console.log('WebSocket connected successfully:', newSocket.id);
-          setSocketStatus('connected');
-          socketStatusRef.current = 'connected';
-          reconnectCount = 0; // Reset counter on successful connection
-          
-          // Setup all the standard socket event handlers
-          setupSocketEvents(newSocket);
-        });
-        
-        // Set up disconnect handler
-        newSocket.on('disconnect', (reason) => {
-          console.log('WebSocket disconnected, reason:', reason);
-          setSocketStatus('disconnected');
-          socketStatusRef.current = 'disconnected';
-        });
-        
-        // Set up server error handler
-        newSocket.on('server_error', (data) => {
-          console.error('Server reported an error:', data);
           setProcessingUpdates(prev => [...prev, {
             id: Date.now(),
             status: 'error',
-            message: `Server error: ${data.message || 'Unknown error'}`,
-            details: data.details,
+            message: 'Failed to get processing updates. Please check the status in your account dashboard.',
             timestamp: new Date().toISOString()
           }]);
-        });
-        
-        // Save socket instance to both state and ref
-        setSocket(newSocket);
-        socketRef.current = newSocket;
-        
-        return () => {
-          if (newSocket) {
-            newSocket.disconnect();
-          }
-        };
-      } catch (error) {
-        console.error('Error creating socket:', error);
-        
-        // Try next configuration approach if available
-        currentConfigIndex++;
-        if (currentConfigIndex <= config.SOCKET_FALLBACK_CONFIGS.length + 3) {
-          console.log(`Trying connection config #${currentConfigIndex} after error`);
-          reconnectCount = 0;
-          return attemptConnection(currentConfigIndex);
         }
-        
-        // Fall back to polling if all socket attempts fail
-        setupPollingFallback();
-        return () => {};
       }
-    };
-    
-    // Helper function to set up polling as fallback
-    const setupPollingFallback = () => {
-      console.log('Setting up HTTP polling fallback for updates');
-      setProcessingUpdates(prev => [...prev, {
-        id: Date.now(),
-        status: 'info',
-        message: 'WebSocket connection failed. Using HTTP polling for updates.',
-        timestamp: new Date().toISOString()
-      }]);
-      
-      // Start polling for updates
-      startStatusPolling();
-    };
-    
-    // Function to start polling for status updates
-    const startStatusPolling = () => {
-      // Clear any existing polling
-      if (pollingIntervalRef.current) {
-        clearInterval(pollingIntervalRef.current);
-      }
-      
-      // Set up new polling interval
-      const interval = setInterval(() => {
-        if (!uploading) {
-          // Stop polling if no longer uploading
-          clearInterval(interval);
-          return;
-        }
-        
-        // Poll for status
-        axios.get(`${config.API_URL}/api/status?sessionId=${sessionId}`, {
-          headers: {
-            'x-user-id': user?.id || '',
-            'x-session-id': sessionId
-          },
-          withCredentials: true,
-          timeout: 1000000
-        })
-        .then(response => {
-          if (response.data) {
-            console.log('Received status update via polling:', response.data);
-            handleProcessingUpdate(response.data);
-          }
-        })
-        .catch(error => {
-          console.error('Error polling for status:', error);
-        });
-      }, 10000); // Poll every 10 seconds
-      
-      // Save reference to interval
-      pollingIntervalRef.current = interval;
-    };
-    
-    // Start with the preferred connection method
-    return attemptConnection(0);
-  };
-
-  // Helper function to set up socket event listeners
-  const setupSocketEvents = (socket) => {
-    socket.on('connect', () => {
-      console.log('Connected to WebSocket server with socket ID:', socket.id);
-      setSocketStatus('connected');
-      socketStatusRef.current = 'connected';
-      reconnectAttemptsRef.current = 0;
-      
-      // Clear any network error messages on successful connection
-      if (error && error.includes('Network error detected')) {
-        setError(null);
-      }
-      
-      setProcessingUpdates(prev => [...prev, {
-        id: Date.now(),
-        status: 'success',
-        message: 'Real-time connection established',
-        timestamp: new Date().toISOString()
-      }]);
-    });
-    
-    socket.on('processing_update', (update) => {
-      console.log('Processing update received:', update);
-      
-      // Extract model info if available
-      if (update.transcriptionModel) {
-        setTranscriptionModel(update.transcriptionModel);
-      }
-      
-      if (update.analysisModel) {
-        setAnalysisModel(update.analysisModel);
-      }
-      
-      // Save transcript if it's included in the update
-      if (update.transcript) {
-        setTranscript(update.transcript);
-      }
-      
-      // Auto-complete when final status is received
-      if (update.status === 'completed' || update.message === 'Processing completed successfully') {
-        setProgress(100);
-        setUploading(false);
-        
-        // Log all available properties for debugging
-        console.log('Completed update with file details:', {
-          reportFileName: update.reportFileName,
-          docxFileName: update.docxFileName,
-          reportPath: update.reportPath,
-          reportUrl: update.reportUrl
-        });
-        
-        setResult({
-          message: 'Processing completed successfully',
-          fileName: update.reportFileName || update.docxFileName || update.fileName || 'meeting_report.docx', 
-          reportUrl: update.reportUrl || `/api/download/${update.reportFileName}`,
-          format: update.format || (update.reportFileName?.endsWith('.pdf') ? 'pdf' : 'docx'),
-          docxUrl: update.docxUrl || `/api/download/${update.docxFileName || update.reportFileName}`,
-          pdfUrl: update.pdfUrl,
-          primaryUrl: update.primaryUrl,
-          transcript: update.transcript,
-          // Preserve the raw update data for debugging
-          rawUpdate: update
-        });
-      }
-      
-      // Handle errors
-      if (update.status === 'error') {
-        setError(update.message || 'An error occurred during processing');
-        setUploading(false);
-        setProgress(0);
-      }
-      
-      // Update progress if available
-      if (update.percentComplete && !isNaN(update.percentComplete)) {
-        // Scale to 50-100% range since upload is 0-50%
-        const scaledProgress = 50 + (update.percentComplete / 2);
-        setProgress(Math.min(99, scaledProgress)); // Cap at 99% until complete
-      }
-      
-      // Add the update to our list of updates
-      setProcessingUpdates(prev => [...prev, {
-        ...update,
-        id: Date.now()
-      }]);
-    });
-    
-    socket.on('disconnect', (reason) => {
-      console.log('Disconnected from WebSocket server:', reason);
-      setSocketStatus('disconnected');
-      socketStatusRef.current = 'disconnected';
-      
-      // Add a message about the disconnection
-      setProcessingUpdates(prev => [...prev, {
-        id: Date.now(),
-        status: 'warning',
-        message: 'Real-time connection lost',
-        details: 'Attempting to reconnect. Processing will continue in the background.',
-        timestamp: new Date().toISOString()
-      }]);
-      
-      // Don't show errors immediately on disconnect - we'll try to reconnect first
-      if (reconnectAttemptsRef.current > 3) {
-        setError(prev => prev || config.ERROR_MESSAGES.NETWORK_ERROR);
-      }
-      
-      // Attempt reconnection if not already reconnecting and haven't exceeded attempts
-      if (reconnectAttemptsRef.current < maxReconnectAttempts && 
-          reason !== 'io client disconnect') {
-        reconnectAttemptsRef.current++;
-        console.log(`Attempting to reconnect (${reconnectAttemptsRef.current}/${maxReconnectAttempts})...`);
-        
-        // Manual reconnection after delay
-        setTimeout(() => {
-          if (socket && !socket.connected) {
-            console.log('Reconnecting...');
-            socket.connect();
-            
-            // Add a message about reconnection attempt
-            setProcessingUpdates(prev => [...prev, {
-              id: Date.now(),
-              status: 'info',
-              message: `Reconnection attempt ${reconnectAttemptsRef.current}/${maxReconnectAttempts}`,
-              timestamp: new Date().toISOString()
-            }]);
-          }
-        }, 2000 * reconnectAttemptsRef.current); // Increasingly longer delays
-      } else if (reconnectAttemptsRef.current >= maxReconnectAttempts) {
-        console.error('Maximum reconnection attempts reached');
-        setError(prev => prev || 'Connection lost. Please refresh the page to reconnect.');
-
-        // Add fallback polling mechanism when WebSockets completely fail
-        setProcessingUpdates(prev => [...prev, {
-          id: Date.now(),
-          status: 'info',
-          message: 'Switching to alternative update method',
-          details: 'Real-time connection failed. Using polling for updates instead.',
-          timestamp: new Date().toISOString()
-        }]);
-        
-        // Set up polling for updates
-        const pollInterval = setInterval(() => {
-          // Only poll if we're still in uploading state
-          if (uploading) {
-            console.log('Polling for file processing status...');
-            
-            // Try to get update via HTTP request instead of WebSocket
-            axios.get(`${config.API_URL}/api/status?sessionId=${sessionId}`, {
-              headers: {
-                'x-user-id': user?.id || '',
-                'x-session-id': sessionId
-              },
-              timeout: 1000000
-            })
-            .then(response => {
-              if (response.data) {
-                // Handle the update data
-                const update = response.data;
-                console.log('Received update via polling:', update);
-                
-                // Add the update to our list
-                setProcessingUpdates(prev => [...prev, {
-                  ...update,
-                  id: Date.now(),
-                  pollingUpdate: true
-                }]);
-                
-                // Process completion status
-                if (update.status === 'completed') {
-                  setProgress(100);
-                  setUploading(false);
-                  setResult({
-                    message: 'Processing completed successfully',
-                    fileName: update.reportFileName || update.fileName || 'meeting_report.docx',
-                    reportUrl: update.reportUrl || `/api/download/${update.reportFileName}`,
-                    format: update.format || 'docx',
-                    transcript: update.transcript
-                  });
-                  
-                  // Clear polling interval when complete
-                  clearInterval(pollInterval);
-                }
-              }
-            })
-            .catch(error => {
-              console.error('Error polling for updates:', error);
-            });
-          } else {
-            // Clear interval if we're no longer uploading
-            clearInterval(pollInterval);
-          }
-        }, 10000); // Poll every 10 seconds
-        
-        // Make sure to clean up the interval
-        return () => {
-          clearInterval(pollInterval);
-        };
-      }
-    });
-  };
-
-  // Add upload progress monitoring to detect stalled uploads
-  useEffect(() => {
-    let progressTimer;
-    let lastProgress = 0;
-    let stalledTime = 0;
-    
-    if (uploading && progress > 0 && progress < 100) {
-      progressTimer = setInterval(() => {
-        // Check if progress has changed in the last 30 seconds
-        if (progress === lastProgress) {
-          stalledTime += 500000;
-          
-          // After 60 seconds with no progress, warn the user
-          if (stalledTime === 6000000) {
-            setProcessingUpdates(prev => [...prev, {
-              id: Date.now(),
-              status: 'warning',
-              message: 'Upload seems to be slow',
-              details: 'The upload has not progressed for 60 seconds. This may be due to network issues or server load.',
-              timestamp: new Date().toISOString()
-            }]);
-          }
-        } else {
-          // Reset stalled time if progress changed
-          stalledTime = 0;
-          lastProgress = progress;
-        }
-      }, 5000); // Check every 5 seconds
-    }
-    
-    return () => {
-      if (progressTimer) clearInterval(progressTimer);
-    };
-  }, [uploading, progress]);
-
-  const handleFileChange = (e) => {
-    if (e.target.files && e.target.files[0]) {
-      const selectedFile = e.target.files[0];
-      
-      // Check if file is an audio file
-      if (!selectedFile.type.startsWith('audio/')) {
-        setError('Please upload an audio file (MP3, WAV, etc.)');
-        return;
-      }
-      
-      // Check file size (max 100MB)
-      if (selectedFile.size > config.MAX_FILE_SIZE) {
-        setError('File size exceeds 100MB limit');
-        return;
-      }
-      
-      setFile(selectedFile);
-      setError(null);
-    }
-  };
-
-  const handleDrag = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    
-    if (e.type === 'dragenter' || e.type === 'dragover') {
-      setDragActive(true);
-    } else if (e.type === 'dragleave') {
-      setDragActive(false);
-    }
-  };
-
-  const handleDrop = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragActive(false);
-    
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      const droppedFile = e.dataTransfer.files[0];
-      
-      // Check if file is an audio file
-      if (!droppedFile.type.startsWith('audio/')) {
-        setError('Please upload an audio file (MP3, WAV, etc.)');
-        return;
-      }
-      
-      // Check file size (max 100MB)
-      if (droppedFile.size > config.MAX_FILE_SIZE) {
-        setError('File size exceeds 100MB limit');
-        return;
-      }
-      
-      setFile(droppedFile);
-      setError(null);
-    }
-  };
-
-  const handleTopicChange = (e) => {
-    setMeetingTopic(e.target.value);
-  };
-
-  const handleCustomInstructionsChange = (e) => {
-    setCustomInstructions(e.target.value);
+    }, 5000);
   };
   
-  const handleEvaluationTemplateChange = (e) => {
-    const selectedTemplate = e.target.value;
-    setEvaluationTemplate(selectedTemplate);
-    
-    // If a predefined template is selected, populate with the template content
-    if (selectedTemplate && selectedTemplate !== 'custom') {
-      const template = EVALUATION_TEMPLATES.find(t => t.value === selectedTemplate);
-      if (template && template.template) {
-        setCustomEvaluationTemplate(template.template);
-      }
-    } else if (selectedTemplate === 'custom') {
-      // For custom template, start with an empty textarea or a basic structure
-      setCustomEvaluationTemplate('');
-    } else {
-      // No template selected
-      setCustomEvaluationTemplate('');
+  // If we're in the middle of an upload and WebSockets aren't working, begin polling
+  const setupPollingFallback = () => {
+    // Only set up polling if we're uploading and don't already have an interval
+    if (uploading && !pollingIntervalRef.current && fileIdRef.current) {
+      console.log('Setting up polling fallback for status updates');
+      startPollingForUpdates(fileIdRef.current);
+    } else if (uploading && !fileIdRef.current) {
+      console.log('Cannot set up polling - no fileId available');
     }
   };
   
-  const handleCustomEvaluationTemplateChange = (e) => {
-    setCustomEvaluationTemplate(e.target.value);
-  };
-  
-  const toggleEvaluationOptions = () => {
-    setShowEvaluationOptions(!showEvaluationOptions);
+  // Process update from polling
+  const processUpdate = (data) => {
+    // Add the update to our updates log
+    setProcessingUpdates(prev => [...prev, {
+      id: Date.now(),
+      ...data,
+      timestamp: new Date().toISOString()
+    }]);
+    
+    // Handle different status types
+    if (data.status === 'completed') {
+      setProgress(100);
+      setUploading(false);
+      
+      setResult({
+        message: 'Processing completed successfully',
+        fileName: data.fileName || 'processed_file.docx',
+        reportUrl: data.reportUrl || (data.fileId ? `/api/download/${data.fileId}` : null),
+        format: data.format || 'docx'
+      });
+      
+      if (data.transcript) {
+        setTranscript(data.transcript);
+        setTranscriptAvailable(true);
+      }
+    } 
+    else if (data.status === 'error') {
+      setError(data.error || 'An error occurred during processing');
+      setUploading(false);
+    } 
+    else if (data.progress) {
+      // Update progress (scale to 50-100 range)
+      const scaledProgress = 50 + (data.progress / 2);
+      setProgress(Math.min(scaledProgress, 99));
+    }
   };
 
-  // Utility function to format file size
-  const formatFileSize = (bytes) => {
-    if (bytes === 0) return '0 Bytes';
-    
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-  };
-
-  // Helper function to calculate overall progress from chunk data
+  // Calculate overall progress from chunk data
   const calculateOverallProgress = (chunks) => {
     if (!chunks.length) return 0;
     
@@ -832,291 +587,77 @@ const FileUpload = () => {
     return totalProgress / chunks.length;
   };
 
-  // Upload file chunk with multiple fallback strategies for CORS issues
-  const uploadChunk = async (chunkIndex, totalChunks, fileId, commonFormData, headers, uploadedChunks, strategyIndex = 0, isRetry = false) => {
-    // Get the appropriate strategy based on the current index
-    const strategies = config.UPLOAD_CONFIG.FALLBACK_STRATEGIES;
-    const strategy = strategies[strategyIndex] || strategies[0];
-    
-    console.log(`Uploading chunk ${chunkIndex + 1}/${totalChunks} (strategy ${strategyIndex + 1}, attempt ${uploadedChunks[chunkIndex].attempts}${isRetry ? ', retry' : ''})`);
-    
+  // Upload file chunk with retry functionality
+  const uploadChunk = async (chunkIndex, totalChunks, fileId, commonFormData, headers, chunks) => {
     try {
-      // Prepare URL - use proxy if specified in the strategy
-      let uploadUrl = `${config.API_URL}/api/upload/chunk`;
+      // Prepare form data with chunk info
+      const formData = new FormData();
       
-      // On network errors, try a fallback API URL
-      if (isRetry && config.BACKUP_API_URLS.length > 0) {
-        // Select a fallback URL based on the retry count
-        const fallbackIndex = Math.min(uploadedChunks[chunkIndex].attempts - 1, config.BACKUP_API_URLS.length - 1);
-        uploadUrl = `${config.getFallbackApiUrl(fallbackIndex)}/api/upload/chunk`;
-        console.log(`Using fallback API URL: ${uploadUrl}`);
+      // Add common form data
+      for (const [key, value] of Object.entries(commonFormData)) {
+        formData.append(key, value);
       }
       
-      if (strategy.useProxy) {
-        uploadUrl = config.getProxyUrl(uploadUrl);
-        console.log(`Using CORS proxy for upload: ${uploadUrl}`);
-      }
+      // Add chunk-specific data
+      formData.append('chunkIndex', chunkIndex);
+      formData.append('totalChunks', totalChunks);
+      formData.append('fileId', fileId);
+      formData.append('chunk', chunks[chunkIndex].data);
       
-      // Use fetch API directly for maximum control when specified in strategy
-      if (strategy.useFetch) {
-        console.log(`Using fetch API directly (bypass axios)`);
-        
-        // Prepare form data with chunk info
-        const formData = new FormData();
-        
-        // Add common form data
-        for (const [key, value] of Object.entries(commonFormData)) {
-          formData.append(key, value);
+      // Configure request
+      const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+      const requestConfig = {
+        headers,
+        timeout: 30000,
+        onUploadProgress: (progressEvent) => {
+          // Calculate progress for this chunk
+          const chunkProgress = (progressEvent.loaded / progressEvent.total) * 100;
+          
+          // Update progress for this specific chunk
+          const updatedChunks = [...chunks];
+          updatedChunks[chunkIndex].progress = chunkProgress;
+          setUploadedChunks(updatedChunks);
+          
+          // Calculate overall progress (up to 50% - the rest is for processing)
+          const overallProgress = calculateOverallProgress(updatedChunks) / 2;
+          setProgress(overallProgress);
         }
-        
-        // Add chunk-specific data
-        formData.append('chunkIndex', chunkIndex);
-        formData.append('totalChunks', totalChunks);
-        formData.append('fileId', fileId);
-        formData.append('chunk', uploadedChunks[chunkIndex].data);
-        
-        // Setup fetch options
-        const fetchOptions = {
-          method: 'POST',
-          body: formData,
-          credentials: strategy.withCredentials ? 'include' : 'omit',
-          mode: 'cors',
-          headers: {
-            ...headers
-          }
-        };
-        
-        // Remove Content-Type to let browser set it with boundary
-        if (!strategy.includeContentType) {
-          delete fetchOptions.headers['Content-Type'];
-        }
-        
-        // Manual progress tracking using XMLHttpRequest
-        const xhr = new XMLHttpRequest();
-        
-        // Setup a promise that resolves when the request completes
-        const uploadPromise = new Promise((resolve, reject) => {
-          xhr.open('POST', uploadUrl, true);
-          
-          // Add headers with proper filtering of restricted headers
-          const restrictedHeaders = [
-            'accept-charset',
-            'accept-encoding',
-            'access-control-request-headers',
-            'access-control-request-method',
-            'connection',
-            'content-length',
-            'cookie',
-            'cookie2',
-            'date',
-            'dnt',
-            'expect',
-            'host',
-            'keep-alive',
-            'origin',
-            'referer',
-            'te',
-            'trailer',
-            'transfer-encoding',
-            'upgrade',
-            'via'
-          ];
-
-          Object.keys(fetchOptions.headers).forEach(header => {
-            // Skip restricted headers that browsers don't allow JavaScript to set
-            if (!restrictedHeaders.includes(header.toLowerCase())) {
-              xhr.setRequestHeader(header, fetchOptions.headers[header]);
-            }
-          });
-          
-          // Set credentials mode
-          xhr.withCredentials = strategy.withCredentials;
-          
-          // Setup progress handler
-          xhr.upload.onprogress = (progressEvent) => {
-            if (progressEvent.lengthComputable) {
-              const chunkProgress = (progressEvent.loaded / progressEvent.total) * 100;
-              
-              // Update progress for this specific chunk
-              const updatedChunks = [...uploadedChunks];
-              updatedChunks[chunkIndex].progress = chunkProgress;
-              setUploadedChunks(updatedChunks);
-              
-              // Calculate overall progress (up to 50% - the rest is for processing)
-              const overallProgress = calculateOverallProgress(updatedChunks) / 2;
-              setProgress(overallProgress);
-            }
-          };
-          
-          // Setup completion handlers
-          xhr.onload = () => {
-            if (xhr.status >= 200 && xhr.status < 300) {
-              try {
-                const response = JSON.parse(xhr.responseText);
-                resolve(response);
-              } catch (err) {
-                resolve({ success: true }); // Assume success even if parsing fails
-              }
-            } else {
-              reject(new Error(`HTTP error ${xhr.status}: ${xhr.statusText}`));
-            }
-          };
-          
-          xhr.onerror = () => {
-            reject(new Error('Network error occurred'));
-          };
-          
-          xhr.ontimeout = () => {
-            reject(new Error('Request timed out'));
-          };
-          
-          // Send the request
-          xhr.send(formData);
-        });
-        
-        // Wait for the upload to complete
-        const response = await uploadPromise;
-        
-        // Mark this chunk as uploaded
-        const updatedChunks = [...uploadedChunks];
-        updatedChunks[chunkIndex].uploaded = true;
-        updatedChunks[chunkIndex].progress = 100;
-        setUploadedChunks(updatedChunks);
-        
-        console.log(`Chunk ${chunkIndex + 1}/${totalChunks} uploaded successfully with fetch API`);
-        
-        // Return response data
-        return response;
-      } else {
-        // Use standard axios approach
-        // Prepare form data with chunk info
-        const formData = new FormData();
-        
-        // Add common form data
-        for (const [key, value] of Object.entries(commonFormData)) {
-          formData.append(key, value);
-        }
-        
-        // Add chunk-specific data
-        formData.append('chunkIndex', chunkIndex);
-        formData.append('totalChunks', totalChunks);
-        formData.append('fileId', fileId);
-        formData.append('chunk', uploadedChunks[chunkIndex].data);
-        
-        // Configure request headers based on strategy
-        const requestConfig = {
-          headers: { ...headers },
-          withCredentials: strategy.withCredentials,
-          timeout: config.UPLOAD_TIMEOUT,
-          onUploadProgress: (progressEvent) => {
-            // Calculate progress for this chunk
-            const chunkProgress = (progressEvent.loaded / progressEvent.total) * 100;
-            
-            // Update progress for this specific chunk
-            const updatedChunks = [...uploadedChunks];
-            updatedChunks[chunkIndex].progress = chunkProgress;
-            setUploadedChunks(updatedChunks);
-            
-            // Calculate overall progress (up to 50% - the rest is for processing)
-            const overallProgress = calculateOverallProgress(updatedChunks) / 2;
-            setProgress(overallProgress);
-          }
-        };
-        
-        // If strategy indicates to exclude Content-Type header, delete it
-        // This can help with certain CORS configurations
-        if (!strategy.includeContentType) {
-          delete requestConfig.headers['Content-Type'];
-        }
-        
-        // Send the upload request
-        const response = await axios.post(uploadUrl, formData, requestConfig);
-        
-        // Mark this chunk as uploaded
-        const updatedChunks = [...uploadedChunks];
-        updatedChunks[chunkIndex].uploaded = true;
-        updatedChunks[chunkIndex].progress = 100;
-        setUploadedChunks(updatedChunks);
-        
-        console.log(`Chunk ${chunkIndex + 1}/${totalChunks} uploaded successfully`);
-        
-        // Return response data
-        return response.data;
-      }
+      };
+      
+      // Send the upload request
+      const response = await axios.post(`${apiUrl}/api/upload/chunk`, formData, requestConfig);
+      
+      // Mark this chunk as uploaded
+      const updatedChunks = [...chunks];
+      updatedChunks[chunkIndex].uploaded = true;
+      updatedChunks[chunkIndex].progress = 100;
+      setUploadedChunks(updatedChunks);
+      
+      console.log(`Chunk ${chunkIndex + 1}/${totalChunks} uploaded successfully`);
+      
+      // Return response data
+      return response.data;
     } catch (error) {
       console.error(`Error uploading chunk ${chunkIndex + 1}/${totalChunks}:`, error);
       
       // Track the attempt
-      const updatedChunks = [...uploadedChunks];
+      const updatedChunks = [...chunks];
       updatedChunks[chunkIndex].attempts += 1;
       setUploadedChunks(updatedChunks);
       
-      // Check if it's a CORS error or network error
-      const isCors = config.isCorsError(error);
-      const isNetworkError = error.message?.includes('Network Error');
-      
-      // If it's a CORS error or network error, try the next strategy if available
-      if ((isCors || isNetworkError) && strategyIndex < strategies.length - 1) {
-        console.log(`CORS or network error detected. Trying next upload strategy (${strategyIndex + 2}/${strategies.length})`);
-        
-        setProcessingUpdates(prev => [...prev, {
-          id: Date.now(),
-          status: 'warning',
-          message: isNetworkError ? 'Network error detected. Trying alternative approach...' : config.ERROR_MESSAGES.CORS_ISSUE,
-          timestamp: new Date().toISOString()
-        }]);
-        
-        // Add a small delay before retrying with the next strategy
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        
-        // Try the next strategy
-        return uploadChunk(chunkIndex, totalChunks, fileId, commonFormData, headers, uploadedChunks, strategyIndex + 1, false);
-      }
-      
-      // For network errors on the current strategy, try a fallback API URL
-      if (isNetworkError && !isRetry) {
-        console.log(`Network error detected. Trying fallback API URL...`);
-        
-        setProcessingUpdates(prev => [...prev, {
-          id: Date.now(),
-          status: 'warning',
-          message: 'Network error detected. Trying fallback server...',
-          timestamp: new Date().toISOString()
-        }]);
-        
-        // Add a delay before retrying
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        
-        // Retry with the same strategy but using a fallback URL
-        return uploadChunk(chunkIndex, totalChunks, fileId, commonFormData, headers, uploadedChunks, strategyIndex, true);
-      }
-      
-      // For server errors, add retry delay
-      if (error?.response?.status >= 500) {
-        console.log('Server error. Adding delay before retry...');
-        await new Promise(resolve => setTimeout(resolve, config.UPLOAD_CONFIG.RETRY_DELAY));
-      }
-      
       // If we've exceeded retry attempts, throw the error
-      if (uploadedChunks[chunkIndex].attempts >= config.UPLOAD_CONFIG.MAX_RETRIES) {
+      if (updatedChunks[chunkIndex].attempts >= 3) {
         throw error;
       }
       
-      // Otherwise, retry with the same strategy
-      console.log(`Retrying chunk ${chunkIndex + 1}/${totalChunks} (attempt ${uploadedChunks[chunkIndex].attempts + 1}/${config.UPLOAD_CONFIG.MAX_RETRIES})`);
-      
-      setProcessingUpdates(prev => [...prev, {
-        id: Date.now(),
-        status: 'info',
-        message: config.ERROR_MESSAGES.UPLOAD_RETRY,
-        timestamp: new Date().toISOString()
-      }]);
+      // Otherwise, retry with a delay
+      console.log(`Retrying chunk ${chunkIndex + 1}/${totalChunks} (attempt ${updatedChunks[chunkIndex].attempts + 1}/3)`);
       
       // Add a delay before retrying
-      await new Promise(resolve => setTimeout(resolve, config.UPLOAD_CONFIG.RETRY_DELAY));
+      await new Promise(resolve => setTimeout(resolve, 2000));
       
       // Retry with the same strategy
-      return uploadChunk(chunkIndex, totalChunks, fileId, commonFormData, headers, uploadedChunks, strategyIndex, false);
+      return uploadChunk(chunkIndex, totalChunks, fileId, commonFormData, headers, updatedChunks);
     }
   };
 
@@ -1135,19 +676,24 @@ const FileUpload = () => {
       setResult(null);
       setProcessingUpdates([]);
       
-      // Create a unique session ID for this upload
-      const newSessionId = uuidv4();
-      setSessionId(newSessionId);
+      // Track key references
+      uploadStartTimeRef.current = Date.now();
+      lastProgressUpdateRef.current = Date.now();
+      reconnectAttemptsRef.current = 0;
+      consecutiveFailuresRef.current = 0;
       
-      // Initialize WebSocket connection with the session ID
-      // This will allow us to receive processing updates
-      const cleanup = connectSocket();
+      // Clear any existing polling interval
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
       
       // Generate a unique file ID for tracking chunks
       const fileId = uuidv4();
+      fileIdRef.current = fileId;
       
       // Prepare file for chunked upload 
-      const chunkSize = config.UPLOAD_CONFIG.CHUNK_SIZE;
+      const chunkSize = CHUNK_SIZE;
       const totalChunks = Math.ceil(file.size / chunkSize);
       
       console.log(`Preparing to upload file in ${totalChunks} chunks`);
@@ -1174,7 +720,7 @@ const FileUpload = () => {
         fileName: file.name,
         fileType: file.type,
         fileSize: file.size,
-        sessionId: newSessionId,
+        sessionId: sessionId,
         userId: user?.id || '',
         meetingTopic: meetingTopic || '',
         customInstructions: customInstructions || '',
@@ -1185,10 +731,10 @@ const FileUpload = () => {
       // Common headers for all requests
       const headers = {
         'x-user-id': user?.id || '',
-        'x-session-id': newSessionId
+        'x-session-id': sessionId
       };
       
-      console.log('Starting chunked upload with session ID:', newSessionId);
+      console.log('Starting chunked upload with session ID:', sessionId);
       
       // Log initial upload state
       setProcessingUpdates(prev => [...prev, {
@@ -1238,6 +784,7 @@ const FileUpload = () => {
       
       // Mark upload as complete and transition to processing phase
       setProgress(50); // Upload is 50% of the total progress
+      lastProgressUpdateRef.current = Date.now(); // Update progress timestamp
       console.log('Chunked upload completed. Waiting for server processing...');
       
       // Add a message about successful upload
@@ -1248,10 +795,39 @@ const FileUpload = () => {
         timestamp: new Date().toISOString()
       }]);
       
-      // The rest of the processing will be handled via WebSocket updates
+      // Register for processing updates
+      if (socketRef.current) {
+        socketRef.current.emit('register_for_updates', { 
+          fileId: fileId,
+          sessionId: sessionId
+        });
+        console.log('Registered for processing updates with server');
+      } else {
+        console.warn('Socket not available for real-time updates, using polling fallback');
+        startPollingForUpdates(fileId);
+      }
       
-      // Return cleanup function
-      return cleanup;
+      // Set up simple monitoring for stalled uploads
+      const monitoringInterval = setInterval(() => {
+        // Check if we're still processing
+        if (!uploading) {
+          clearInterval(monitoringInterval);
+          return;
+        }
+        
+        const now = Date.now();
+        // If no updates for 30 seconds, try polling as backup
+        if (lastProgressUpdateRef.current && (now - lastProgressUpdateRef.current > 30000)) {
+          console.log('No updates for 30 seconds, setting up polling as backup');
+          
+          if (fileIdRef.current && !pollingIntervalRef.current) {
+            startPollingForUpdates(fileIdRef.current);
+          }
+        }
+      }, 30000);
+      
+      return () => clearInterval(monitoringInterval);
+      
     } catch (error) {
       console.error('Upload failed:', error);
       
@@ -1261,18 +837,18 @@ const FileUpload = () => {
       // Determine what type of error occurred for better user feedback
       let errorMessage = 'An error occurred during upload.';
       
-      if (config.isCorsError(error)) {
-        errorMessage = config.ERROR_MESSAGES.CORS_ERROR;
+      if (config.isCorsError && config.isCorsError(error)) {
+        errorMessage = config.ERROR_MESSAGES?.CORS_ERROR || 'CORS error occurred';
       } else if (error.message?.includes('Network Error')) {
-        errorMessage = config.ERROR_MESSAGES.NETWORK_ERROR;
+        errorMessage = config.ERROR_MESSAGES?.NETWORK_ERROR || 'Network error occurred';
       } else if (error.response) {
         // Server returned an error
         if (error.response.status === 502) {
-          errorMessage = config.ERROR_MESSAGES.BAD_GATEWAY;
+          errorMessage = config.ERROR_MESSAGES?.BAD_GATEWAY || 'Bad gateway error';
         } else if (error.response.status === 413) {
-          errorMessage = config.ERROR_MESSAGES.FILE_TOO_LARGE;
+          errorMessage = config.ERROR_MESSAGES?.FILE_TOO_LARGE || 'File too large';
         } else if (error.response.status === 404) {
-          errorMessage = config.ERROR_MESSAGES.API_404;
+          errorMessage = config.ERROR_MESSAGES?.API_404 || 'API endpoint not found';
         } else if (error.response.data?.error) {
           errorMessage = error.response.data.error;
         }
@@ -1293,6 +869,96 @@ const FileUpload = () => {
     }
   };
 
+  // Handle file drag events
+  const handleDrag = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    if (e.type === 'dragenter' || e.type === 'dragover') {
+      setDragActive(true);
+    } else if (e.type === 'dragleave') {
+      setDragActive(false);
+    }
+  };
+
+  // Handle file drop event
+  const handleDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragActive(false);
+    
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      const droppedFile = e.dataTransfer.files[0];
+      
+      // Check if file is an audio file
+      if (!droppedFile.type.startsWith('audio/')) {
+        setError('Please upload an audio file (MP3, WAV, etc.)');
+        return;
+      }
+      
+      // Check file size (max 100MB)
+      if (droppedFile.size > 100 * 1024 * 1024) {
+        setError('File size exceeds 100MB limit');
+        return;
+      }
+      
+      setFile(droppedFile);
+      setError(null);
+    }
+  };
+
+  // Handle file input change
+  const handleFileChange = (e) => {
+    if (e.target.files && e.target.files[0]) {
+      const selectedFile = e.target.files[0];
+      
+      // Check if file is an audio file
+      if (!selectedFile.type.startsWith('audio/')) {
+        setError('Please upload an audio file (MP3, WAV, etc.)');
+        return;
+      }
+      
+      // Check file size (max 100MB)
+      if (selectedFile.size > 100 * 1024 * 1024) {
+        setError('File size exceeds 100MB limit');
+        return;
+      }
+      
+      setFile(selectedFile);
+      setError(null);
+    }
+  };
+
+  // Toggle evaluation options visibility
+  const toggleEvaluationOptions = () => {
+    setShowEvaluationOptions(!showEvaluationOptions);
+  };
+
+  // Handle evaluation template change
+  const handleEvaluationTemplateChange = (e) => {
+    const selectedTemplate = e.target.value;
+    setEvaluationTemplate(selectedTemplate);
+    
+    // If a predefined template is selected, populate with the template content
+    if (selectedTemplate && selectedTemplate !== 'custom') {
+      const template = EVALUATION_TEMPLATES.find(t => t.value === selectedTemplate);
+      if (template && template.template) {
+        setCustomEvaluationTemplate(template.template);
+      }
+    } else if (selectedTemplate === 'custom') {
+      // For custom template, start with an empty textarea
+      setCustomEvaluationTemplate('');
+    } else {
+      // No template selected
+      setCustomEvaluationTemplate('');
+    }
+  };
+
+  // Handle custom evaluation template change
+  const handleCustomEvaluationTemplateChange = (e) => {
+    setCustomEvaluationTemplate(e.target.value);
+  };
+
   // Initialize WebSocket connection and session ID
   useEffect(() => {
     // Skip reconnecting if we already have a connected socket
@@ -1302,42 +968,120 @@ const FileUpload = () => {
     }
     
     // Initialize connection
-    const cleanup = connectSocket();
+    const initSocket2 = () => {
+      const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+      
+      // Close existing socket if it exists
+      if (socketRef.current) {
+        try {
+          socketRef.current.close();
+        } catch (e) {
+          console.error('Error closing existing socket:', e);
+        }
+      }
+      
+      // Create new socket instance with basic configuration
+      const socket = io(apiUrl, {
+        query: { sessionId },
+        reconnection: true,
+        reconnectionAttempts: maxReconnectAttempts,
+        reconnectionDelay: 1000,
+        timeout: 10000
+      });
+      
+      // Set up basic event handlers (full handlers are in the main initSocket)
+      socket.on('connect', () => {
+        console.log('Socket connected:', socket.id);
+        setSocketStatus('connected');
+        socketStatusRef.current = 'connected';
+      });
+      
+      socket.on('disconnect', (reason) => {
+        console.log('Socket disconnected:', reason);
+        setSocketStatus('disconnected');
+        socketStatusRef.current = 'disconnected';
+      });
+      
+      // Store the socket
+      socketRef.current = socket;
+      
+      // Return cleanup function
+      return () => {
+        try {
+          socket.disconnect();
+        } catch (e) {
+          console.error('Error disconnecting socket:', e);
+        }
+      };
+    };
     
-    // Setup heartbeat ping every 15 seconds to keep connection alive
+    // Setup aggressive heartbeat ping every 8 seconds to keep connection alive
     const heartbeatInterval = setInterval(() => {
-      // Access the current values from refs instead of state
+      // Access the current socket
       const currentSocket = socketRef.current;
-      const currentSocketStatus = socketStatusRef.current;
       
       if (currentSocket && currentSocket.connected) {
-        currentSocket.emit('ping', { timestamp: new Date().toISOString() });
-      } else if (currentSocket && !currentSocket.connected && currentSocketStatus !== 'connecting') {
+        // Send heartbeat and track the time
+        const pingTimestamp = Date.now();
+        currentSocket.emit('ping', { timestamp: pingTimestamp });
+        
+        // Set a timeout to check if we got a pong back
+        setTimeout(() => {
+          // Check if socket is still connected and needs a reconnect
+          if (currentSocket && currentSocket.connected && 
+              (!currentSocket.lastPongTime || currentSocket.lastPongTime < pingTimestamp)) {
+            console.log('No pong received in 5 seconds, reconnecting...');
+            // Force reconnection
+            try {
+              currentSocket.disconnect();
+              currentSocket.connect();
+            } catch (e) {
+              console.error('Error during socket reconnect:', e);
+            }
+          }
+        }, 5000);
+      } else if (currentSocket && !currentSocket.connected && socketStatus !== 'connecting') {
         // Try to reconnect if socket exists but isn't connected
         console.log('Heartbeat detected disconnected socket, attempting to reconnect...');
-        currentSocket.connect();
+        try {
+          currentSocket.connect();
+        } catch (e) {
+          console.error('Error reconnecting socket from heartbeat:', e);
+          // If reconnection fails, try to set up a new socket
+          if (reconnectAttemptsRef.current < 3) {
+            reconnectAttemptsRef.current++;
+            initSocket2();
+          } else {
+            // Fall back to polling
+            setupPollingFallback();
+          }
+        }
       }
-    }, 15000);
+    }, 8000); // More frequent heartbeat
     
     // Set up polling fallback for when WebSockets fail completely
-    let pollingInterval;
-    const failedAttemptsBeforePolling = 3;
+    const failedAttemptsBeforePolling = 2; // Reduced threshold
     
-    // If we're in the middle of an upload and WebSockets aren't working, begin polling
-    const setupPollingFallback = () => {
-      // Only set up polling if we're uploading and don't already have an interval
-      if (uploading && !pollingInterval) {
-        console.log('Setting up polling fallback for status updates');
-        
-        pollingInterval = setInterval(() => {
-          if (!uploading) {
-            // If no longer uploading, clear the interval
-            clearInterval(pollingInterval);
-            pollingInterval = null;
-            return;
-          }
-          
-          // Poll for updates
+    // Initiate socket connection
+    const cleanup = initSocket2();
+    
+    // Watch for socket state changes to set up polling when needed
+    const socketStateWatcher = setInterval(() => {
+      // If socket has been disconnected for a while during an upload, start polling
+      if ((socketRef.current?.disconnected || !socketRef.current) && 
+          reconnectAttemptsRef.current >= failedAttemptsBeforePolling && 
+          uploading) {
+        setupPollingFallback();
+      }
+      
+      // If uploading has been going on for more than 5 minutes, force completion check
+      if (uploading && uploadStartTimeRef.current && 
+          (Date.now() - uploadStartTimeRef.current > 5 * 60 * 1000)) {
+        // Check if there's been any progress update in the last 2 minutes
+        const lastUpdateTime = lastProgressUpdateRef.current || 0;
+        if (Date.now() - lastUpdateTime > 2 * 60 * 1000) {
+          console.log('No progress updates for 2+ minutes, forcing status check');
+          // Force a status check
           axios.get(`${config.API_URL}/api/status?sessionId=${sessionId}`, {
             headers: {
               'x-user-id': user?.id || '',
@@ -1347,62 +1091,47 @@ const FileUpload = () => {
             timeout: 10000
           })
           .then(response => {
-            if (response.data) {
-              const update = response.data;
-              console.log('Received update via polling:', update);
-              
-              // Process the update
-              if (update.status === 'completed') {
-                setProgress(100);
-                setUploading(false);
-                if (update.reportUrl) {
-                  setResult({
-                    message: 'Processing completed successfully',
-                    fileName: update.reportFileName || update.fileName || 'meeting_report.docx',
-                    reportUrl: update.reportUrl,
-                    format: update.format || 'docx',
-                    transcript: update.transcript
-                  });
-                }
-              } else if (update.status === 'error') {
-                setError(update.message || 'An error occurred during processing');
-                setUploading(false);
-              } else if (update.percentComplete) {
-                // Update progress
-                const scaledProgress = 50 + (update.percentComplete / 2);
-                setProgress(Math.min(99, scaledProgress));
-              }
-              
-              // Add update to processing updates
-              setProcessingUpdates(prev => [...prev, {
-                ...update,
-                id: Date.now(),
-                pollingUpdate: true
-              }]);
+            if (response.data && response.data.status === 'completed') {
+              console.log('Status check found completed processing');
+              setProgress(100);
+              setUploading(false);
+              setResult({
+                message: 'Processing completed successfully',
+                fileName: response.data.reportFileName || response.data.fileName || 'meeting_report.docx',
+                reportUrl: response.data.reportUrl,
+                format: response.data.format || 'docx',
+                transcript: response.data.transcript
+              });
             }
           })
-          .catch(error => {
-            console.error('Error polling for status:', error);
-          });
-        }, 10000); // Poll every 10 seconds
+          .catch(err => console.error('Error in forced status check:', err));
+        }
       }
-    };
-    
-    // Watch for socket state changes to set up polling when needed
-    const socketStateWatcher = setInterval(() => {
-      if (socketRef.current?.disconnected && reconnectAttemptsRef.current >= failedAttemptsBeforePolling && uploading) {
-        setupPollingFallback();
-      }
-    }, 5000);
+    }, 10000);
     
     // Clean up on component unmount
     return () => {
       clearInterval(heartbeatInterval);
       clearInterval(socketStateWatcher);
-      if (pollingInterval) clearInterval(pollingInterval);
-      cleanup();
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
+      if (cleanup && typeof cleanup === 'function') {
+        cleanup();
+      }
+      
+      // Explicitly close socket
+      if (socketRef.current) {
+        try {
+          socketRef.current.disconnect();
+          socketRef.current = null;
+        } catch (e) {
+          console.error('Error disconnecting socket during cleanup:', e);
+        }
+      }
     };
-  }, [sessionId, uploading]); // Add uploading as dependency
+  }, [sessionId, uploading, user?.id, socketStatus]);
 
   // Add this function at the end of the component before the return statement
   const renderFallbackDashboard = () => {
@@ -1524,9 +1253,6 @@ const FileUpload = () => {
       window.removeEventListener('resize', handleResize);
     };
   }, []);
-
-  // Add as part of your component's state management at the top
-  const pollingIntervalRef = useRef(null);
 
   // Add this function to process updates from both WebSocket and polling
   const handleProcessingUpdate = (data) => {
@@ -1819,14 +1545,14 @@ const FileUpload = () => {
             )}
             
             {/* Usage information for logged-in users */}
-            {isSignedIn && usageData && (
+            {isSignedIn && requestStatus && (
               <div className="usage-info">
                 <p>
-                  You've used {usageData.used} of {usageData.limit} free transcriptions
-                  {usageData.upgradeRequired && ' - Upgrade to continue using the service'}
+                  You've used {requestStatus.used} of {requestStatus.limit} free transcriptions
+                  {requestStatus.upgradeRequired && ' - Upgrade to continue using the service'}
                 </p>
                 
-                {usageData.upgradeRequired && (
+                {requestStatus.upgradeRequired && (
                   <button
                     className="upgrade-button"
                     onClick={() => setShowUpgradeModal(true)}
@@ -1864,7 +1590,7 @@ const FileUpload = () => {
         {showUpgradeModal && (
           <PremiumUpgrade 
             onClose={() => setShowUpgradeModal(false)}
-            usageData={usageData}
+            requestStatus={requestStatus}
           />
         )}
       </div>

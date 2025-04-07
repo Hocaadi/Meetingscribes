@@ -1,63 +1,53 @@
+import axios from 'axios';
+import config from '../config';
 import supabase from '../supabaseClient';
 
 /**
- * AuthService handles authentication using Supabase
+ * Service for handling authentication-related operations
  */
 class AuthService {
   /**
-   * Sign up a new user with email and password
-   * @param {string} email - User's email
-   * @param {string} password - User's password
-   * @param {object} metadata - Additional user metadata like firstName, lastName
-   * @returns {Promise<{user, error}>} User data or error
+   * Get current authenticated user
+   * @returns {Promise<Object>} Current user object
    */
-  async signUp(email, password, metadata = {}) {
-    try {
-      const { data, error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          data: {
-            first_name: metadata.firstName || '',
-            last_name: metadata.lastName || '',
-            full_name: `${metadata.firstName || ''} ${metadata.lastName || ''}`.trim(),
-            ...metadata
-          },
-        },
-      });
-
-      if (error) throw error;
-      return { user: data.user, session: data.session };
-    } catch (error) {
-      console.error('Sign up error:', error);
-      return { error };
-    }
+  async getCurrentUser() {
+    const { data: { user } } = await supabase.auth.getUser();
+    return user;
   }
 
   /**
-   * Sign in a user with email and password
-   * @param {string} email - User's email
-   * @param {string} password - User's password
-   * @returns {Promise<{user, error}>} User data or error
+   * Get user session
+   * @returns {Promise<Object>} Current session object
+   */
+  async getSession() {
+    const { data: { session } } = await supabase.auth.getSession();
+    return session;
+  }
+
+  /**
+   * Sign in with email and password
+   * @param {string} email - User email
+   * @param {string} password - User password
+   * @returns {Promise<Object>} Authentication result
    */
   async signIn(email, password) {
     try {
       const { data, error } = await supabase.auth.signInWithPassword({
         email,
-        password,
+        password
       });
-
+      
       if (error) throw error;
-      return { user: data.user, session: data.session };
+      return { success: true, user: data.user, session: data.session };
     } catch (error) {
       console.error('Sign in error:', error);
-      return { error };
+      return { success: false, error: error.message };
     }
   }
 
   /**
-   * Sign out the current user
-   * @returns {Promise<{error}>} Error if any
+   * Sign out current user
+   * @returns {Promise<Object>} Sign out result
    */
   async signOut() {
     try {
@@ -66,120 +56,65 @@ class AuthService {
       return { success: true };
     } catch (error) {
       console.error('Sign out error:', error);
-      return { error };
-    }
-  }
-
-  /**
-   * Get the current user session
-   * @returns {Promise<{user, session, error}>} Current session or null
-   */
-  async getSession() {
-    try {
-      const { data, error } = await supabase.auth.getSession();
-      if (error) throw error;
-      return { 
-        user: data.session?.user || null,
-        session: data.session,
-      };
-    } catch (error) {
-      console.error('Get session error:', error);
-      return { error };
-    }
-  }
-
-  /**
-   * Get user data with profile information
-   * @returns {Promise<{user, error}>} User data with profile info
-   */
-  async getUserWithProfile() {
-    try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      if (!sessionData.session) return { user: null };
-      
-      const user = sessionData.session.user;
-      
-      // Format user data to match what components expect
-      return {
-        user: {
-          id: user.id,
-          firstName: user.user_metadata?.first_name || '',
-          lastName: user.user_metadata?.last_name || '',
-          fullName: user.user_metadata?.full_name || `${user.user_metadata?.first_name || ''} ${user.user_metadata?.last_name || ''}`.trim(),
-          primaryEmailAddress: { emailAddress: user.email },
-          imageUrl: user.user_metadata?.avatar_url || null,
-          // Add any additional fields needed by your application
-        }
-      };
-    } catch (error) {
-      console.error('Get user with profile error:', error);
-      return { error };
-    }
-  }
-
-  /**
-   * Reset password for a user
-   * @param {string} email - The email to send password reset to
-   * @returns {Promise<{success, error}>} Status of the request
-   */
-  async resetPassword(email) {
-    try {
-      const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${window.location.origin}/reset-password`,
-      });
-      
-      if (error) throw error;
-      return { success: true };
-    } catch (error) {
-      console.error('Password reset error:', error);
-      return { error };
-    }
-  }
-
-  /**
-   * Update user password
-   * @param {string} newPassword - The new password
-   * @returns {Promise<{success, error}>} Status of the update
-   */
-  async updatePassword(newPassword) {
-    try {
-      const { error } = await supabase.auth.updateUser({
-        password: newPassword,
-      });
-      
-      if (error) throw error;
-      return { success: true };
-    } catch (error) {
-      console.error('Update password error:', error);
-      return { error };
+      return { success: false, error: error.message };
     }
   }
 
   /**
    * Update user profile
-   * @param {object} profile - User profile data to update
-   * @returns {Promise<{user, error}>} Updated user data
+   * @param {Object} profile - Profile data to update
+   * @returns {Promise<Object>} Update result
    */
   async updateProfile(profile) {
     try {
-      const { data, error } = await supabase.auth.updateUser({
-        data: {
-          first_name: profile.firstName,
-          last_name: profile.lastName,
-          full_name: `${profile.firstName || ''} ${profile.lastName || ''}`.trim(),
-          // Add any additional profile fields
-        }
-      });
+      // Get current auth token
+      const session = await this.getSession();
       
-      if (error) throw error;
-      return { user: data.user };
+      if (!session) {
+        throw new Error('No active session found');
+      }
+      
+      // Call API to update profile
+      const response = await axios.post(
+        `${config.API_URL}/api/user/profile`,
+        {
+          firstName: profile.firstName,
+          lastName: profile.lastName
+        },
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.access_token}`
+          }
+        }
+      );
+      
+      if (response.status !== 200) {
+        throw new Error('Failed to update profile');
+      }
+      
+      return { success: true, profile: response.data };
     } catch (error) {
       console.error('Update profile error:', error);
-      return { error };
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Check if user has admin role
+   * @returns {Promise<boolean>} True if user is admin
+   */
+  async isAdmin() {
+    try {
+      const user = await this.getCurrentUser();
+      return user?.user_metadata?.role === 'admin';
+    } catch (error) {
+      console.error('Admin check error:', error);
+      return false;
     }
   }
 }
 
-// Create and export a singleton instance
+// Create and export singleton instance
 const authService = new AuthService();
 export default authService; 

@@ -17,6 +17,7 @@ import { Alert, Button, Container } from 'react-bootstrap';
 import ThankYouPage from './components/ThankYouPage';
 import Footer from './components/Footer';
 import WorkProgress from './pages/WorkProgress';
+import Profile from './pages/Profile';
 import AdminAuthCheck from './AdminAuthCheck';
 
 // Configuration warning component
@@ -154,6 +155,14 @@ function App() {
                   element={
                     <ProtectedRoute>
                       <WorkProgress />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/profile"
+                  element={
+                    <ProtectedRoute>
+                      <Profile />
                     </ProtectedRoute>
                   }
                 />

@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { font-family: Arial; }
+    .invoice-box {
+      max-width: 800px; margin: auto;
+      padding: 30px; border: 1px solid #eee;
+    }
+  </style>
+</head>
+<body>
+  <div class="invoice-box">
+    <h2>Invoice {{ invoice_id }}</h2>
+    <p><b>Date:</b> {{ invoice_date }}</p>
+    <p><b>Bill To:</b> {{ client }}</p>
+    <table width="100%" border="1" cellspacing="0" cellpadding="5">
+      <tr><th>Date</th><th>Task</th><th>Hours</th><th>Rate</th><th>Total</th></tr>
+      {% for task in tasks %}
+      <tr>
+        <td>{{ task.date }}</td>
+        <td>{{ task.desc }}</td>
+        <td>{{ task.hours }}</td>
+        <td>${{ task.rate }}</td>
+        <td>${{ task.total }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    <h3>Total: ${{ total }}</h3>
+  </div>
+</body>
+</html>

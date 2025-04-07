@@ -787,6 +787,93 @@ app.get('/api/user/profile', async (req, res) => {
   }
 });
 
+// Add a profile update endpoint
+app.post('/api/user/profile', async (req, res) => {
+  if (!req.userId) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  
+  const { firstName, lastName } = req.body;
+  
+  if (!firstName) {
+    return res.status(400).json({ error: 'First name is required' });
+  }
+  
+  try {
+    // First update the auth metadata
+    const { error: authError } = await supabase.auth.admin.updateUserById(
+      req.userId,
+      { 
+        user_metadata: { 
+          first_name: firstName,
+          last_name: lastName || '',
+          full_name: `${firstName} ${lastName || ''}`.trim()
+        } 
+      }
+    );
+    
+    if (authError) {
+      console.error('Error updating auth metadata:', authError);
+      throw authError;
+    }
+    
+    // Check if profile exists
+    const { data: existingProfile } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('id', req.userId)
+      .single();
+    
+    let profileData;
+    
+    if (existingProfile) {
+      // Update existing profile
+      const { data, error } = await supabase
+        .from('profiles')
+        .update({
+          first_name: firstName,
+          last_name: lastName || '',
+          full_name: `${firstName} ${lastName || ''}`.trim(),
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', req.userId)
+        .select()
+        .single();
+      
+      if (error) throw error;
+      profileData = data;
+    } else {
+      // Create new profile
+      const { data, error } = await supabase
+        .from('profiles')
+        .insert({
+          id: req.userId,
+          first_name: firstName,
+          last_name: lastName || '',
+          full_name: `${firstName} ${lastName || ''}`.trim(),
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        })
+        .select()
+        .single();
+      
+      if (error) throw error;
+      profileData = data;
+    }
+    
+    return res.status(200).json({
+      success: true,
+      profile: profileData
+    });
+  } catch (error) {
+    console.error('Error updating profile:', error);
+    return res.status(500).json({ 
+      error: 'Failed to update profile',
+      details: error.message
+    });
+  }
+});
+
 // Test endpoint to verify auth status
 app.get('/api/auth-status', (req, res) => {
   // Add explicit CORS headers for this endpoint

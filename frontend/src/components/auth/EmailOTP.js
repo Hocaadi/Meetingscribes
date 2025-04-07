@@ -5,21 +5,23 @@ import EmailService from '../../contexts/EmailService';
 import './AuthForms.css';
 
 const EmailOTP = ({ email, onVerificationComplete, onCancel }) => {
-  const { verifyOTP, resendOTP } = useAuth();
   const [otp, setOtp] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [resendDisabled, setResendDisabled] = useState(false);
   const [countdown, setCountdown] = useState(0);
+  const [sendAttempts, setSendAttempts] = useState(0);
+  const { verifyOTP } = useAuth();
   
-  // Initialize by sending OTP
   useEffect(() => {
+    // Send initial OTP when component mounts
     const sendInitialOTP = async () => {
       try {
         // Reset any previous errors
         setError('');
         setMessage('Sending verification code...');
+        setSendAttempts(prev => prev + 1);
         
         // Send OTP using our service
         const result = await EmailService.sendOTPEmail(email, 'signup');
@@ -31,12 +33,26 @@ const EmailOTP = ({ email, onVerificationComplete, onCancel }) => {
         setMessage('Verification code sent to your email');
         
         // If we're in development mode with the fixed OTP, show a helpful message
-        if (process.env.NODE_ENV === 'development' && result.isDev) {
-          setMessage('Check the browser console for your verification code (development mode)');
+        if (process.env.NODE_ENV === 'development') {
+          setMessage('Development mode: Check the server console for your verification code (usually 123456)');
+          console.log('In development mode, you can use code: 123456');
         }
       } catch (err) {
         console.error('Error sending initial OTP:', err);
-        setError(err.message || 'Failed to send verification code. Please try again.');
+        
+        // Provide more helpful error messages based on the error
+        if (err.message && err.message.includes('ECONNREFUSED')) {
+          setError('Unable to connect to email server. Please check your network connection or contact support.');
+        } else if (err.message && err.message.includes('Authentication')) {
+          setError('Email server authentication failed. Please contact support.');
+        } else {
+          setError(`Failed to send verification code: ${err.message || 'Unknown error'}. Please try again or contact support.`);
+        }
+        
+        // Still provide guidance in development mode despite errors
+        if (process.env.NODE_ENV === 'development') {
+          setMessage('Development mode: You can use code 123456 for testing');
+        }
       }
     };
     
@@ -95,6 +111,7 @@ const EmailOTP = ({ email, onVerificationComplete, onCancel }) => {
     setError('');
     setMessage('');
     setResendDisabled(true);
+    setSendAttempts(prev => prev + 1);
     
     try {
       // Send OTP using our service
@@ -107,8 +124,8 @@ const EmailOTP = ({ email, onVerificationComplete, onCancel }) => {
       setMessage('Verification code resent. Please check your email.');
       
       // If we're in development mode with the fixed OTP, show a helpful message
-      if (process.env.NODE_ENV === 'development' && result.isDev) {
-        setMessage('Check the browser console for your verification code (development mode)');
+      if (process.env.NODE_ENV === 'development') {
+        setMessage('Development mode: Check the server console for your verification code (usually 123456)');
       }
       
       // Start countdown
@@ -126,7 +143,21 @@ const EmailOTP = ({ email, onVerificationComplete, onCancel }) => {
       }, 1000);
     } catch (err) {
       console.error('Error resending OTP:', err);
-      setError(err.message || 'Failed to resend verification code. Please try again.');
+      
+      // Provide more helpful error messages
+      if (err.message && err.message.includes('ECONNREFUSED')) {
+        setError('Unable to connect to email server. Please check your network connection or contact support.');
+      } else if (err.message && err.message.includes('Authentication')) {
+        setError('Email server authentication failed. Please contact support.');
+      } else {
+        setError(`Failed to resend code: ${err.message || 'Unknown error'}. Please try again or contact support.`);
+      }
+      
+      // Still provide guidance in development mode
+      if (process.env.NODE_ENV === 'development') {
+        setMessage('Development mode: You can use code 123456 for testing');
+      }
+      
       setResendDisabled(false);
     }
   };
@@ -147,6 +178,13 @@ const EmailOTP = ({ email, onVerificationComplete, onCancel }) => {
       {message && (
         <Alert variant="info" className="mb-4">
           {message}
+        </Alert>
+      )}
+      
+      {/* Development mode helper for testing */}
+      {process.env.NODE_ENV === 'development' && (
+        <Alert variant="warning" className="mb-4">
+          <strong>Development Mode:</strong> Use code <code>123456</code> for testing
         </Alert>
       )}
       
@@ -200,6 +238,19 @@ const EmailOTP = ({ email, onVerificationComplete, onCancel }) => {
           Go back
         </Button>
       </div>
+      
+      {/* Show troubleshooting help after multiple send attempts */}
+      {sendAttempts > 1 && (
+        <Alert variant="secondary" className="mt-4 small">
+          <p className="mb-2"><strong>Not receiving emails?</strong></p>
+          <ul className="mb-0">
+            <li>Check your spam/junk folder</li>
+            <li>Verify your email address is correct</li>
+            <li>Try using a different email provider</li>
+            <li>Contact support if the issue persists</li>
+          </ul>
+        </Alert>
+      )}
     </div>
   );
 };
