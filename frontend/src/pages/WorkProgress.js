@@ -356,30 +356,36 @@ const WorkProgress = () => {
               <Tabs
                 activeKey={activeTab}
                 onSelect={(k) => setActiveTab(k)}
-                className="mb-3"
+                className="work-progress-tabs"
+                fill
               >
-                <Tab eventKey="tasks" title="Tasks">
-                  <TaskList 
-                    tasks={tasks}
-                    onCreateTask={handleCreateTask}
-                    onCompleteTask={handleCompleteTask}
-                  />
-                </Tab>
-                <Tab eventKey="accomplishments" title="Accomplishments">
-                  <AccomplishmentsList 
-                    accomplishments={accomplishments} 
-                    dateRange={dateRange}
-                    onDateRangeChange={handleDateRangeChange}
-                  />
-                </Tab>
-                <Tab eventKey="reports" title="Status Reports">
-                  <StatusReportSection 
-                    statusReports={statusReports} 
-                    onGenerateReport={handleGenerateStatusReport}
-                  />
-                </Tab>
+                <Tab eventKey="tasks" title={<span className="tab-title">Tasks</span>} />
+                <Tab eventKey="accomplishments" title={<span className="tab-title">Accomplishments</span>} />
+                <Tab eventKey="reports" title={<span className="tab-title">Status Reports</span>} />
               </Tabs>
             </Card.Header>
+            <Card.Body>
+              {activeTab === "tasks" && (
+                <TaskList 
+                  tasks={tasks}
+                  onCreateTask={handleCreateTask}
+                  onCompleteTask={handleCompleteTask}
+                />
+              )}
+              {activeTab === "accomplishments" && (
+                <AccomplishmentsList 
+                  accomplishments={accomplishments} 
+                  dateRange={dateRange}
+                  onDateRangeChange={handleDateRangeChange}
+                />
+              )}
+              {activeTab === "reports" && (
+                <StatusReportSection 
+                  statusReports={statusReports} 
+                  onGenerateReport={handleGenerateStatusReport}
+                />
+              )}
+            </Card.Body>
           </Card>
         </Col>
         

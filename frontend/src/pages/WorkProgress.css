@@ -19,18 +19,51 @@
   margin-bottom: 30px;
 }
 
-/* Tab styling */
+/* Tab styling - UPDATED for better visibility */
+.nav-tabs {
+  border-bottom: 1px solid #dee2e6;
+  margin-bottom: 0;
+}
+
 .nav-tabs .nav-link {
-  color: #34495e;
-  border: none;
-  font-weight: 500;
+  color: #495057;
+  border: 1px solid transparent;
+  font-weight: 600;
   padding: 10px 20px;
+  margin-right: 5px;
+  background-color: #f8f9fa;
+  border-radius: 6px 6px 0 0;
+  position: relative;
+  transition: all 0.2s ease;
+}
+
+.nav-tabs .nav-link:hover {
+  color: #3498db;
+  border-color: #e9ecef #e9ecef #dee2e6;
+  background-color: #fff;
 }
 
 .nav-tabs .nav-link.active {
   color: #3498db;
-  border-bottom: 3px solid #3498db;
-  background-color: transparent;
+  background-color: #fff;
+  border-color: #dee2e6 #dee2e6 #fff;
+  border-bottom: 2px solid #3498db;
+}
+
+.tab-content {
+  padding: 20px;
+  border: 1px solid #dee2e6;
+  border-top: none;
+  border-radius: 0 0 6px 6px;
+}
+
+/* Fix for tab content display */
+.tab-pane {
+  display: none;
+}
+
+.tab-pane.active {
+  display: block;
 }
 
 /* Card styling */
@@ -43,6 +76,7 @@
 .card-header {
   background-color: #fff;
   border-bottom: 1px solid #ecf0f1;
+  padding: 0;
 }
 
 /* Buttons */
@@ -398,7 +432,31 @@
   margin-right: 3px;
 }
 
-/* Responsive adjustments */
+/* Enhanced tab styling for professional look */
+.work-progress-tabs {
+  padding-top: 10px;
+}
+
+.tab-title {
+  font-weight: 600;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 5px;
+}
+
+.nav-tabs .nav-link:focus {
+  outline: none;
+  box-shadow: none;
+}
+
+/* Custom styling for active tabs to ensure visibility */
+.work-progress-tabs .nav-link.active .tab-title {
+  color: #2563eb;
+}
+
+/* Ensure tabs are properly spaced and visible on smaller screens */
 @media (max-width: 768px) {
   .work-progress-title {
     font-size: 1.8rem;
@@ -414,5 +472,21 @@
   
   .stat-box {
     min-width: calc(50% - 10px);
+  }
+  
+  .work-progress-tabs {
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 5px;
+  }
+  
+  .work-progress-tabs .nav-item {
+    flex: 0 0 auto;
+  }
+  
+  .tab-title {
+    font-size: 14px;
+    white-space: nowrap;
   }
 } 
