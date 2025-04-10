@@ -206,14 +206,15 @@ const AskAIChat = ({ isOpen, onClose }) => {
             ))}
             
             {isLoading && (
-              <div className="ask-ai-chat-message ai loading">
+              <div className="ask-ai-chat-message ai typing">
                 <div className="ask-ai-chat-message-icon">
                   <FontAwesomeIcon icon={faRobot} />
                 </div>
                 <div className="ask-ai-chat-message-content">
                   <div className="ask-ai-chat-message-text">
-                    <Spinner animation="border" size="sm" /> Thinking...
+                    Applying...
                   </div>
+                  <div className="ask-ai-chat-message-source">Processing your request</div>
                 </div>
               </div>
             )}

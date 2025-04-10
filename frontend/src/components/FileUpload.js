@@ -266,8 +266,8 @@ const FileUpload = () => {
       
       socket.on('reconnect_attempt', (attempt) => {
         console.log(`Socket reconnection attempt ${attempt}`);
-        setSocketStatus('connecting');
-        socketStatusRef.current = 'connecting';
+    setSocketStatus('connecting');
+    socketStatusRef.current = 'connecting';
       });
       
       socket.on('reconnect', (attempt) => {
@@ -283,8 +283,8 @@ const FileUpload = () => {
       
       socket.on('reconnect_failed', () => {
         console.log('Socket reconnection failed');
-        setSocketStatus('error');
-        socketStatusRef.current = 'error';
+            setSocketStatus('error');
+            socketStatusRef.current = 'error';
         
         // Switch to polling if we have a file being processed
         if (fileIdRef.current && uploading) {
@@ -294,7 +294,7 @@ const FileUpload = () => {
       
       // Handle processing updates
       socket.on('processing_update', (data) => {
-        console.log('Received processing update:', data);
+          console.log('Received processing update:', data);
         lastProgressUpdateRef.current = Date.now();
         
         // Store fileId for reconnection needs
@@ -322,11 +322,11 @@ const FileUpload = () => {
           }
           
           // Add the update to our log with a unique ID
-          setProcessingUpdates(prev => [...prev, {
-            id: Date.now(),
+      setProcessingUpdates(prev => [...prev, {
+        id: Date.now(),
             ...data,
-            timestamp: new Date().toISOString()
-          }]);
+        timestamp: new Date().toISOString()
+      }]);
         }
         else if (data.status === 'completed') {
           // Upload completed
@@ -356,26 +356,26 @@ const FileUpload = () => {
           }
           
           // Add completion message
-          setProcessingUpdates(prev => [...prev, {
-            id: Date.now(),
-            status: 'success',
+      setProcessingUpdates(prev => [...prev, {
+        id: Date.now(),
+        status: 'success',
             message: 'Processing completed successfully! You can now download your results.',
-            timestamp: new Date().toISOString()
-          }]);
+        timestamp: new Date().toISOString()
+      }]);
         }
         else if (data.status === 'error') {
-          // Handle errors
-          setUploading(false);
+      // Handle errors
+        setUploading(false);
           setError(data.error || 'An error occurred during processing');
           
           // Add error message
-          setProcessingUpdates(prev => [...prev, {
-            id: Date.now(),
+      setProcessingUpdates(prev => [...prev, {
+        id: Date.now(),
             status: 'error',
             message: data.error || 'An error occurred during processing',
-            timestamp: new Date().toISOString()
-          }]);
-          
+        timestamp: new Date().toISOString()
+      }]);
+      
           // Clear polling if it was active
           if (pollingIntervalRef.current) {
             clearInterval(pollingIntervalRef.current);
@@ -400,22 +400,22 @@ const FileUpload = () => {
           }
           
           // Add to updates log
-          setProcessingUpdates(prev => [...prev, {
-            id: Date.now(),
+            setProcessingUpdates(prev => [...prev, {
+              id: Date.now(),
             ...data,
-            timestamp: new Date().toISOString()
-          }]);
-        }
+              timestamp: new Date().toISOString()
+            }]);
+          }
         else {
           // Handle any other status updates
           console.log("Unhandled processing status:", data.status);
           
           // Add to updates log
-          setProcessingUpdates(prev => [...prev, {
-            id: Date.now(),
+        setProcessingUpdates(prev => [...prev, {
+          id: Date.now(),
             ...data,
-            timestamp: new Date().toISOString()
-          }]);
+          timestamp: new Date().toISOString()
+        }]);
         }
       });
       
@@ -482,12 +482,12 @@ const FileUpload = () => {
     lastPollTimeRef.current = Date.now();
     
     // Add message about polling
-    setProcessingUpdates(prev => [...prev, {
-      id: Date.now(),
+            setProcessingUpdates(prev => [...prev, {
+              id: Date.now(),
       status: 'info',
       message: 'Switched to polling for processing updates',
-      timestamp: new Date().toISOString()
-    }]);
+              timestamp: new Date().toISOString()
+            }]);
     
     // Poll every 5 seconds
     pollingIntervalRef.current = setInterval(async () => {
@@ -591,15 +591,15 @@ const FileUpload = () => {
   const uploadChunk = async (chunkIndex, totalChunks, fileId, commonFormData, headers, chunks) => {
     try {
       // Prepare form data with chunk info
-      const formData = new FormData();
-      
+    const formData = new FormData();
+    
       // Add common form data
       for (const [key, value] of Object.entries(commonFormData)) {
-        formData.append(key, value);
+      formData.append(key, value);
       }
-      
-      // Add chunk-specific data
-      formData.append('chunkIndex', chunkIndex);
+    
+    // Add chunk-specific data
+    formData.append('chunkIndex', chunkIndex);
       formData.append('totalChunks', totalChunks);
       formData.append('fileId', fileId);
       formData.append('chunk', chunks[chunkIndex].data);
@@ -637,7 +637,7 @@ const FileUpload = () => {
       
       // Return response data
       return response.data;
-    } catch (error) {
+        } catch (error) {
       console.error(`Error uploading chunk ${chunkIndex + 1}/${totalChunks}:`, error);
       
       // Track the attempt
@@ -664,11 +664,11 @@ const FileUpload = () => {
   // Handle the main file upload process
   const handleUpload = async () => {
     try {
-      if (!file) {
+    if (!file) {
         setError('Please select a file to upload.');
-        return;
-      }
-      
+      return;
+    }
+    
       // Reset any previous state
       setError(null);
       setUploading(true);
@@ -737,12 +737,12 @@ const FileUpload = () => {
       console.log('Starting chunked upload with session ID:', sessionId);
       
       // Log initial upload state
-      setProcessingUpdates(prev => [...prev, {
-        id: Date.now(),
-        status: 'info',
+        setProcessingUpdates(prev => [...prev, {
+          id: Date.now(),
+          status: 'info',
         message: `Starting upload of ${file.name} (${formatFileSize(file.size)}) in ${totalChunks} chunks`,
-        timestamp: new Date().toISOString()
-      }]);
+          timestamp: new Date().toISOString()
+        }]);
       
       // Upload each chunk in parallel with limits
       const results = await Promise.allSettled(
@@ -774,12 +774,12 @@ const FileUpload = () => {
         }
         
         // If some chunks failed, show a warning but continue
-        setProcessingUpdates(prev => [...prev, {
-          id: Date.now(),
-          status: 'warning',
+          setProcessingUpdates(prev => [...prev, {
+            id: Date.now(),
+            status: 'warning',
           message: `${failedChunks.length} of ${totalChunks} chunks failed to upload. Processing may be incomplete.`,
-          timestamp: new Date().toISOString()
-        }]);
+            timestamp: new Date().toISOString()
+          }]);
       }
       
       // Mark upload as complete and transition to processing phase
@@ -788,13 +788,13 @@ const FileUpload = () => {
       console.log('Chunked upload completed. Waiting for server processing...');
       
       // Add a message about successful upload
-      setProcessingUpdates(prev => [...prev, {
-        id: Date.now(),
-        status: 'success',
+        setProcessingUpdates(prev => [...prev, {
+          id: Date.now(),
+          status: 'success',
         message: 'File upload complete. Processing has begun.',
-        timestamp: new Date().toISOString()
-      }]);
-      
+          timestamp: new Date().toISOString()
+        }]);
+        
       // Register for processing updates
       if (socketRef.current) {
         socketRef.current.emit('register_for_updates', { 
@@ -859,13 +859,13 @@ const FileUpload = () => {
       setError(errorMessage);
       
       // Add error to processing updates
-      setProcessingUpdates(prev => [...prev, {
-        id: Date.now(),
+              setProcessingUpdates(prev => [...prev, {
+                id: Date.now(),
         status: 'error',
         message: errorMessage,
         details: error.stack,
-        timestamp: new Date().toISOString()
-      }]);
+                timestamp: new Date().toISOString()
+              }]);
     }
   };
 
@@ -1044,7 +1044,7 @@ const FileUpload = () => {
         // Try to reconnect if socket exists but isn't connected
         console.log('Heartbeat detected disconnected socket, attempting to reconnect...');
         try {
-          currentSocket.connect();
+        currentSocket.connect();
         } catch (e) {
           console.error('Error reconnecting socket from heartbeat:', e);
           // If reconnection fails, try to set up a new socket
@@ -1093,10 +1093,10 @@ const FileUpload = () => {
           .then(response => {
             if (response.data && response.data.status === 'completed') {
               console.log('Status check found completed processing');
-              setProgress(100);
-              setUploading(false);
-              setResult({
-                message: 'Processing completed successfully',
+                setProgress(100);
+                setUploading(false);
+                  setResult({
+                    message: 'Processing completed successfully',
                 fileName: response.data.reportFileName || response.data.fileName || 'meeting_report.docx',
                 reportUrl: response.data.reportUrl,
                 format: response.data.format || 'docx',
@@ -1118,7 +1118,7 @@ const FileUpload = () => {
         pollingIntervalRef.current = null;
       }
       if (cleanup && typeof cleanup === 'function') {
-        cleanup();
+      cleanup();
       }
       
       // Explicitly close socket

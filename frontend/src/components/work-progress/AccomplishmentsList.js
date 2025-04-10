@@ -125,18 +125,27 @@ const AccomplishmentsList = ({ accomplishments, dateRange, onDateRangeChange }) 
       console.log('Starting brag sheet generation with options:', bragSheetOptions);
       console.log('Using filtered accomplishments:', filteredAccomplishments.length);
       
-      // Define endpoints to try in order - local, then production fallback
+      // Define endpoints to try in order - local endpoint first, then try mock/fallback
       const endpoints = [
+        `${window.location.origin.replace(':3000', ':5000')}/api/work-progress/ai/generate-brag-sheet`,
+        `${window.location.origin.replace(':3000', ':5000')}/api/ai/generate-brag-sheet`,
         `${config.API_URL}/api/work-progress/ai/generate-brag-sheet`,
         `${config.API_URL}/api/ai/generate-brag-sheet`,
+        // Keep these as last resort fallbacks
         `https://meetingscribe-backend.onrender.com/api/work-progress/ai/generate-brag-sheet`,
         `https://meetingscribe-backend.onrender.com/api/ai/generate-brag-sheet`
       ];
+      
+      // Log the endpoints we'll try
+      console.log('Will try these endpoints in order:', endpoints);
       
       let lastError = null;
       
       if (bragSheetOptions.format === 'pdf') {
         // For PDF format, try multiple endpoints with blob response
+        let pdfBlob = null;
+        let pdfUrl = null;
+        
         for (const endpoint of endpoints) {
           try {
             console.log(`Attempting PDF generation with endpoint: ${endpoint}`);
@@ -149,28 +158,42 @@ const AccomplishmentsList = ({ accomplishments, dateRange, onDateRangeChange }) 
                 ...bragSheetOptions
               },
               responseType: 'blob', // Important for handling binary data
-              withCredentials: true,
-              timeout: 30000 // Longer timeout for PDF generation
+              withCredentials: false, // Try without credentials for cross-domain
+              timeout: 30000, // Longer timeout for PDF generation
+              headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/pdf'
+              }
             });
             
-            console.log(`Success with endpoint: ${endpoint}`);
+            console.log(`Success with endpoint: ${endpoint}`, response);
             
-            // Create a URL for the blob
-            const url = window.URL.createObjectURL(new Blob([response.data]));
+            // Check if response contains actual PDF data
+            if (response.data.type !== 'application/pdf') {
+              console.warn('Response is not a PDF, skipping', response.data);
+              continue; // Try next endpoint
+            }
+            
+            // Store the blob for potential later use
+            pdfBlob = new Blob([response.data], { type: 'application/pdf' });
+            pdfUrl = window.URL.createObjectURL(pdfBlob);
             
             // Create a temporary link element to trigger the download
             const link = document.createElement('a');
-            link.href = url;
+            link.href = pdfUrl;
             link.setAttribute('download', `brag_sheet_${Date.now()}.pdf`);
             document.body.appendChild(link);
             link.click();
             
-            // Clean up
-            window.URL.revokeObjectURL(url);
+            // Don't revoke URL yet - keep it for the download button
             link.remove();
             
-            // Set an indication that it was generated
-            setBragSheetContent('PDF generated and downloaded successfully!');
+            // Set an indication that it was generated and store the URL for download button
+            setBragSheetContent(JSON.stringify({
+              message: 'PDF generated and downloaded successfully!',
+              url: pdfUrl,
+              timestamp: Date.now()
+            }));
             return; // Exit after successful generation
           } catch (error) {
             console.error(`Failed with endpoint ${endpoint}:`, error);
@@ -179,8 +202,17 @@ const AccomplishmentsList = ({ accomplishments, dateRange, onDateRangeChange }) 
           }
         }
         
-        // If we reach here, all endpoints failed
-        throw lastError || new Error('All PDF generation endpoints failed');
+        // If we reach here, try a fallback approach - generate simple PDF client-side
+        try {
+          console.log('All API endpoints failed, trying client-side PDF generation');
+          
+          // Generate a very simple PDF using client-side library (would require adding a PDF generation library)
+          // For now, just set an error message
+          setBragSheetContent(`Failed to generate PDF from server. Server may be down or not responding.\n\nPlease try a different format or try again later.`);
+        } catch (fallbackError) {
+          console.error('Even fallback PDF generation failed:', fallbackError);
+          throw lastError || fallbackError;
+        }
       } else {
         // For non-PDF formats
         for (const endpoint of endpoints) {
@@ -194,13 +226,30 @@ const AccomplishmentsList = ({ accomplishments, dateRange, onDateRangeChange }) 
               headers: {
                 'Content-Type': 'application/json'
               },
-              withCredentials: true,
+              withCredentials: false, // Try without credentials for cross-domain
               timeout: 20000
             });
             
             console.log(`Success with endpoint: ${endpoint}`);
-            setBragSheetContent(response.data.content);
-            return; // Exit after successful generation
+            
+            // Check if response has content property
+            if (response.data && response.data.content) {
+              setBragSheetContent(response.data.content);
+              return; // Exit after successful generation
+            } else {
+              console.warn('Response missing content property:', response.data);
+              // Try a different format from the response
+              if (response.data) {
+                if (typeof response.data === 'string') {
+                  setBragSheetContent(response.data);
+                  return;
+                } else if (response.data.message || response.data.text) {
+                  setBragSheetContent(response.data.message || response.data.text);
+                  return;
+                }
+              }
+              // Continue to next endpoint if content not found
+            }
           } catch (error) {
             console.error(`Failed with endpoint ${endpoint}:`, error);
             lastError = error;
@@ -208,23 +257,33 @@ const AccomplishmentsList = ({ accomplishments, dateRange, onDateRangeChange }) 
           }
         }
         
-        // If all endpoints fail, try using the WorkAIService as fallback
+        // If all endpoints fail, create a mock brag sheet content as fallback
         try {
-          console.log('Trying WorkAIService as fallback');
-          const result = await WorkAIService.generateBragSheet(
-            filteredAccomplishments,
-            bragSheetOptions
-          );
+          console.log('All endpoints failed, creating mock brag sheet content');
           
-          setBragSheetContent(result.content);
+          // Create simple fallback content
+          const mockContent = `# Brag Sheet (Fallback Mode)
+
+## Summary
+This is a fallback brag sheet generated locally. The server may be down or unreachable.
+
+## Your Accomplishments
+${filteredAccomplishments.map(acc => `
+### ${acc.title}
+**Impact Level:** ${acc.impact_level}
+**Date:** ${new Date(acc.accomplishment_date).toLocaleDateString()}
+
+${acc.description}
+`).join('\n')}
+
+*This content was generated offline due to server connectivity issues.*`;
+          
+          setBragSheetContent(mockContent);
           return;
-        } catch (serviceError) {
-          console.error('WorkAIService fallback failed:', serviceError);
-          lastError = serviceError;
+        } catch (fallbackError) {
+          console.error('Fallback content generation failed:', fallbackError);
+          throw lastError || fallbackError;
         }
-        
-        // If we reach here, everything failed
-        throw lastError || new Error('All brag sheet generation attempts failed');
       }
     } catch (error) {
       console.error('Error generating brag sheet:', error);
@@ -240,27 +299,71 @@ const AccomplishmentsList = ({ accomplishments, dateRange, onDateRangeChange }) 
     }
   };
   
-  // Handle download button for non-PDF formats
+  // Update the handleDownloadBragSheet function to be more resilient to formatting errors
   const handleDownloadBragSheet = () => {
-    // Create a blob with the content
-    const blob = new Blob([bragSheetContent], { type: 'text/plain' });
-    const url = window.URL.createObjectURL(blob);
-    
-    // Create a link and trigger download
-    const link = document.createElement('a');
-    link.href = url;
-    
-    // Set appropriate filename and extension based on format
-    const extension = bragSheetOptions.format === 'html' ? 'html' : 
-                      bragSheetOptions.format === 'markdown' ? 'md' : 'txt';
-    
-    link.setAttribute('download', `brag_sheet_${Date.now()}.${extension}`);
-    document.body.appendChild(link);
-    link.click();
-    
-    // Clean up
-    window.URL.revokeObjectURL(url);
-    link.remove();
+    if (bragSheetOptions.format === 'pdf') {
+      try {
+        // For PDF, try to use the stored URL
+        if (bragSheetContent) {
+          let pdfData = null;
+          
+          // First check if the content is valid JSON
+          try {
+            // Only attempt to parse if it looks like JSON (starts with {)
+            if (bragSheetContent.trim().startsWith('{')) {
+              pdfData = JSON.parse(bragSheetContent);
+            }
+          } catch (e) {
+            console.error('Error parsing PDF data:', e);
+            // Continue with fallback - don't return here
+          }
+          
+          // If we have valid PDF data with a URL, use it
+          if (pdfData && pdfData.url) {
+            // Create a link to download it again
+            const link = document.createElement('a');
+            link.href = pdfData.url;
+            link.setAttribute('download', `brag_sheet_${Date.now()}.pdf`);
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            return;
+          }
+        }
+        
+        // If we get here, we need to regenerate the PDF
+        console.log('PDF URL not found or invalid, regenerating...');
+        handleGenerateBragSheet();
+      } catch (error) {
+        console.error('Error re-downloading PDF:', error);
+        alert('Could not download PDF. Please try generating again.');
+      }
+    } else {
+      try {
+        // For non-PDF formats
+        const blob = new Blob([bragSheetContent], { type: 'text/plain' });
+        const url = window.URL.createObjectURL(blob);
+        
+        // Create a link and trigger download
+        const link = document.createElement('a');
+        link.href = url;
+        
+        // Set appropriate filename and extension based on format
+        const extension = bragSheetOptions.format === 'html' ? 'html' : 
+                          bragSheetOptions.format === 'markdown' ? 'md' : 'txt';
+        
+        link.setAttribute('download', `brag_sheet_${Date.now()}.${extension}`);
+        document.body.appendChild(link);
+        link.click();
+        
+        // Clean up
+        window.URL.revokeObjectURL(url);
+        link.remove();
+      } catch (error) {
+        console.error('Error downloading text content:', error);
+        alert('Could not download content. Please try generating again.');
+      }
+    }
   };
   
   // Handle brag sheet option changes
@@ -322,6 +425,74 @@ const AccomplishmentsList = ({ accomplishments, dateRange, onDateRangeChange }) 
     
     const { color, label } = impacts[impact] || impacts.medium;
     return <Badge bg={color} className="impact-badge">{label}</Badge>;
+  };
+  
+  // Enhance the isPdfGeneratedAndValid function to handle more cases
+  const isPdfGeneratedAndValid = () => {
+    try {
+      if (!bragSheetContent) return false;
+      if (typeof bragSheetContent !== 'string') return false;
+      
+      // If the content is clearly an error message, it's not valid
+      if (bragSheetContent.includes('Failed to generate') || 
+          bragSheetContent.includes('Error:') ||
+          bragSheetContent.includes('Server error:') ||
+          bragSheetContent.includes('not responding')) {
+        return false;
+      }
+      
+      // For PDF format, check multiple conditions
+      if (bragSheetOptions.format === 'pdf') {
+        // First try to parse as JSON if it starts with {
+        if (bragSheetContent.trim().startsWith('{')) {
+          try {
+            const pdfData = JSON.parse(bragSheetContent);
+            // Valid if it has a URL and looks like a success message
+            return pdfData && pdfData.url && 
+                   (pdfData.message && pdfData.message.includes('success'));
+          } catch (e) {
+            // If parsing fails, it's not valid JSON
+            return false;
+          }
+        }
+        // If it's not JSON and doesn't have URL data, consider it invalid
+        return false;
+      }
+      
+      // For other formats, check if content exists and is reasonable length
+      return bragSheetContent.length > 50;
+    } catch (err) {
+      console.error('Error checking PDF validity:', err);
+      return false;
+    }
+  };
+
+  // Create a component for the Download button with enhanced feedback
+  const DownloadButton = () => {
+    const isValid = isPdfGeneratedAndValid();
+    const isEnabled = bragSheetContent && !generatingBragSheet;
+    
+    let buttonText = 'Download';
+    let buttonVariant = 'outline-secondary';
+    
+    // For PDF, provide clearer text
+    if (bragSheetOptions.format === 'pdf' && isValid) {
+      buttonText = 'Download PDF Again';
+      buttonVariant = 'outline-primary';
+    }
+    
+    return (
+      <Button 
+        variant={buttonVariant}
+        size="sm"
+        onClick={handleDownloadBragSheet}
+        disabled={!isEnabled}
+        title={!isEnabled ? 'Generate a brag sheet first' : 'Download your brag sheet'}
+      >
+        <FontAwesomeIcon icon={faDownload} className="me-1" />
+        {buttonText}
+      </Button>
+    );
   };
   
   return (
@@ -652,24 +823,30 @@ const AccomplishmentsList = ({ accomplishments, dateRange, onDateRangeChange }) 
                   <Card.Header>
                     <div className="d-flex justify-content-between align-items-center">
                       <h6 className="mb-0">Your Brag Sheet</h6>
-                      <Button 
-                        variant="outline-secondary" 
-                        size="sm"
-                        onClick={handleDownloadBragSheet}
-                        disabled={!bragSheetContent || bragSheetOptions.format === 'pdf'}
-                      >
-                        <FontAwesomeIcon icon={faDownload} className="me-1" />
-                        Download
-                      </Button>
+                      <DownloadButton />
                     </div>
                   </Card.Header>
                   <Card.Body>
                     {bragSheetOptions.format === 'pdf' ? (
-                      <Alert variant="success">
-                        <Alert.Heading>PDF Generated!</Alert.Heading>
-                        <p>Your PDF brag sheet has been generated and should have downloaded automatically.</p>
-                        <p>If the download didn't start, click the generate button again.</p>
-                      </Alert>
+                      isPdfGeneratedAndValid() ? (
+                        <Alert variant="success">
+                          <Alert.Heading>PDF Generated!</Alert.Heading>
+                          <p>Your PDF brag sheet has been generated and should have downloaded automatically.</p>
+                          <p>If the download didn't start, you can use the <strong>Download PDF Again</strong> button above to try again.</p>
+                        </Alert>
+                      ) : (
+                        <Alert variant="warning">
+                          <Alert.Heading>PDF Generation Issue</Alert.Heading>
+                          <p>There was a problem generating or downloading your PDF.</p>
+                          <hr/>
+                          <ul>
+                            <li>Try clicking the <strong>Generate Brag Sheet</strong> button again</li>
+                            <li>Try a different format like Markdown or Plain Text</li>
+                            <li>Check your network connection and ensure you can access the server</li>
+                            <li>If using a corporate network, check if PDF downloads are allowed</li>
+                          </ul>
+                        </Alert>
+                      )
                     ) : (
                       <pre className="brag-sheet-content" style={{ whiteSpace: 'pre-wrap' }}>
                         {bragSheetContent}
