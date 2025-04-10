@@ -539,7 +539,7 @@ class WorkProgressService {
       
       // Use the backend API endpoint instead of direct Supabase calls
       const response = await axios.post(
-        `${config.API_URL}/activities`, 
+        `${config.API_URL}/api/work-progress/activities`, 
         payload,
         {
           headers: {
@@ -581,7 +581,7 @@ class WorkProgressService {
       }
       
       const response = await axios.put(
-        `${config.API_URL}/activities/${activityId}/end`,
+        `${config.API_URL}/api/work-progress/activities/${activityId}/end`,
         { end_time: new Date().toISOString() },
         {
           headers: {
@@ -622,7 +622,7 @@ class WorkProgressService {
       }
       
       const response = await axios.get(
-        `${config.API_URL}/sessions/${sessionId}/activities`,
+        `${config.API_URL}/api/work-progress/sessions/${sessionId}/activities`,
         {
           headers: {
             Authorization: `Bearer ${await this.getAuthToken()}`

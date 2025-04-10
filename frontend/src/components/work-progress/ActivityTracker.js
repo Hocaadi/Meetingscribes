@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Card, Button, Form, Row, Col, Dropdown, OverlayTrigger, Tooltip } from 'react-bootstrap';
+import { Card, Button, Form, Row, Col, Dropdown, OverlayTrigger, Tooltip, Alert } from 'react-bootstrap';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { 
   faPlay, 
@@ -14,9 +14,13 @@ import {
   faTasks,
   faFileAlt,
   faEllipsisH,
-  faKeyboard
+  faKeyboard,
+  faExclamationTriangle
 } from '@fortawesome/free-solid-svg-icons';
 import WorkProgressService from '../../services/WorkProgressService';
+import axios from 'axios';
+import config from '../../config';
+import supabase from '../../supabaseClient';
 
 // CSS styles for enhanced visual feedback
 const styles = {
@@ -73,6 +77,7 @@ const ActivityTracker = ({ activeSession, onStartSession, onEndSession }) => {
   const [isTimerRunning, setIsTimerRunning] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [sessionError, setSessionError] = useState(null);
+  const [hasActiveSession, setHasActiveSession] = useState(false);
   
   // Refs
   const timerRef = useRef(null);
@@ -145,7 +150,13 @@ const ActivityTracker = ({ activeSession, onStartSession, onEndSession }) => {
   
   // Initialize or reset when activeSession changes
   useEffect(() => {
+    // Clear any previous errors whenever activeSession changes
+    setSessionError(null);
+    
     if (activeSession) {
+      console.log('ActivityTracker received active session:', activeSession.id);
+      setHasActiveSession(true);
+      
       // Calculate elapsed time if session is active
       if (activeSession.start_time) {
         const startTime = new Date(activeSession.start_time).getTime();
@@ -163,6 +174,8 @@ const ActivityTracker = ({ activeSession, onStartSession, onEndSession }) => {
         startTimer();
       }
     } else {
+      console.log('No active session provided to ActivityTracker');
+      setHasActiveSession(false);
       // No active session, reset timer
       stopTimer();
     }
@@ -179,17 +192,17 @@ const ActivityTracker = ({ activeSession, onStartSession, onEndSession }) => {
   useEffect(() => {
     const handleKeyDown = (e) => {
       // Alt+L to log activity if session is active
-      if (e.altKey && e.key === 'l' && activeSession && description.trim() && !isLogging) {
+      if (e.altKey && e.key === 'l' && hasActiveSession && description.trim() && !isLogging) {
         e.preventDefault();
         handleStartActivity();
       }
       // Alt+P to pause/resume timer if session is active
-      else if (e.altKey && e.key === 'p' && activeSession) {
+      else if (e.altKey && e.key === 'p' && hasActiveSession) {
         e.preventDefault();
         isTimerRunning ? pauseTimer() : startTimer();
       }
       // Alt+S to start session if no active session
-      else if (e.altKey && e.key === 's' && !activeSession) {
+      else if (e.altKey && e.key === 's' && !hasActiveSession) {
         e.preventDefault();
         handleStartSession();
       }
@@ -197,7 +210,7 @@ const ActivityTracker = ({ activeSession, onStartSession, onEndSession }) => {
     
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [activeSession, description, isLogging, isTimerRunning]);
+  }, [hasActiveSession, description, isLogging, isTimerRunning]);
   
   // Handle session start
   const handleStartSession = async () => {
@@ -235,9 +248,151 @@ const ActivityTracker = ({ activeSession, onStartSession, onEndSession }) => {
     setActivityType(type);
   };
   
+  /**
+   * Log activity with fallback mechanisms to handle endpoint issues
+   * @param {Object} activityData - The activity data to log
+   * @returns {Promise<Object>} - Result of the logging operation
+   */
+  const logActivityWithFallbacks = async (activityData) => {
+    // Start with normal service method
+    let result = await WorkProgressService.logActivity(activityData);
+    
+    // If successful, return result
+    if (!result.error) {
+      console.log('Activity logged successfully with standard endpoint');
+      return result;
+    }
+    
+    // Log the error for debugging
+    console.warn('Standard endpoint logActivity failed:', result.error);
+    
+    // If there was an error and it looks like a 404 (endpoint not found), try direct fallbacks
+    if (result.error.details && 
+        (result.error.details.includes('404') || 
+         result.error.details.includes('not found'))) {
+      console.warn('Standard endpoint failed, trying direct fallbacks');
+      
+      // Try each potential endpoint directly
+      const fallbackEndpoints = [
+        '/api/work-progress/activities',
+        '/activities',
+        '/api/activities'
+      ];
+      
+      for (const endpoint of fallbackEndpoints) {
+        try {
+          console.log(`Trying fallback endpoint: ${endpoint}`);
+          
+          // For direct API calls, stringify the metadata if it's an object
+          const payloadWithSafeMetadata = { ...activityData };
+          
+          if (payloadWithSafeMetadata.metadata && typeof payloadWithSafeMetadata.metadata === 'object') {
+            try {
+              // Ensure metadata is properly formatted as a string if needed
+              payloadWithSafeMetadata.metadata = JSON.stringify(payloadWithSafeMetadata.metadata);
+            } catch (err) {
+              console.warn('Error stringifying metadata, removing it:', err.message);
+              delete payloadWithSafeMetadata.metadata;
+            }
+          }
+          
+          const response = await axios.post(
+            `${config.API_URL}${endpoint}`, 
+            payloadWithSafeMetadata,
+            {
+              headers: {
+                Authorization: `Bearer ${await WorkProgressService.getAuthToken()}`,
+                'Content-Type': 'application/json',
+                'x-user-id': activityData.user_id || ''  // Include user ID in header as fallback
+              }
+            }
+          );
+          
+          if (response.data && response.data.activity) {
+            console.log(`Activity logged successfully with fallback endpoint: ${endpoint}`);
+            return { data: response.data.activity, error: null };
+          } else if (response.data) {
+            // If there's a response but no activity field, try to construct a result
+            console.log(`Got response from ${endpoint} but no activity field, constructing result`);
+            return { 
+              data: response.data.data || response.data, 
+              error: null 
+            };
+          }
+        } catch (err) {
+          console.warn(`Fallback endpoint ${endpoint} failed:`, err.message);
+          
+          // Try one more time without metadata if there's an error related to it
+          if (err.message.includes('metadata') || err.response?.data?.error?.includes('metadata')) {
+            try {
+              console.log(`Trying ${endpoint} again without metadata...`);
+              const simplePayload = { ...activityData };
+              delete simplePayload.metadata;
+              
+              const simpleResponse = await axios.post(
+                `${config.API_URL}${endpoint}`, 
+                simplePayload,
+                {
+                  headers: {
+                    Authorization: `Bearer ${await WorkProgressService.getAuthToken()}`,
+                    'Content-Type': 'application/json',
+                    'x-user-id': activityData.user_id || ''
+                  }
+                }
+              );
+              
+              if (simpleResponse.data && (simpleResponse.data.activity || simpleResponse.data.data)) {
+                console.log(`Activity logged successfully without metadata via ${endpoint}`);
+                return { 
+                  data: simpleResponse.data.activity || simpleResponse.data.data, 
+                  error: null 
+                };
+              }
+            } catch (simpleErr) {
+              console.warn(`Simplified ${endpoint} also failed:`, simpleErr.message);
+            }
+          }
+        }
+      }
+    }
+    
+    // If we got here, all attempts failed, try direct database insertion
+    try {
+      console.log('All API endpoints failed, attempting direct database insertion');
+      
+      // Create a minimal version of the activity data
+      const minimalData = {
+        session_id: activityData.session_id,
+        user_id: activityData.user_id,
+        activity_type: activityData.activity_type || 'work',
+        description: activityData.description,
+        start_time: activityData.start_time || new Date().toISOString()
+      };
+      
+      // Try direct insertion through supabase
+      const { data, error } = await supabase
+        .from('activity_logs')
+        .insert([minimalData])
+        .select('*')
+        .single();
+      
+      if (error) {
+        console.error('Direct database insertion also failed:', error);
+      } else if (data) {
+        console.log('Activity logged successfully via direct database insertion');
+        return { data, error: null };
+      }
+    } catch (dbError) {
+      console.error('Error with direct database insertion:', dbError);
+    }
+    
+    // If we got here, all attempts failed
+    return result;
+  };
+  
   // Start a new activity
   const handleStartActivity = async () => {
-    if (!activeSession) {
+    if (!hasActiveSession) {
       setSessionError('No active work session. Please start a session first.');
       return;
     }
@@ -255,6 +410,7 @@ const ActivityTracker = ({ activeSession, onStartSession, onEndSession }) => {
     
     try {
       setIsLogging(true);
+      // Clear any previous error messages when attempting to log activity
       setSessionError(null);
       
       // End current activity if exists
@@ -266,25 +422,62 @@ const ActivityTracker = ({ activeSession, onStartSession, onEndSession }) => {
         }
       }
       
+      // Create a proper metadata object that will be safely handled by the database
+      const metadataObj = {
+        source: 'activity_tracker',
+        client_timestamp: new Date().toISOString(),
+        input_method: 'manual',
+        browser: navigator.userAgent || 'unknown',
+        app_version: '1.0' // You can update this with your actual app version
+      };
+      
       // Format the activity data to ensure it's complete
       const activityData = {
         session_id: activeSession.id,
+        user_id: activeSession.user_id, // Include user_id directly from the session
         activity_type: activityType,
         description: trimmedDescription,
         start_time: new Date().toISOString(),
-        metadata: {
-          source: 'activity_tracker',
-          client_timestamp: new Date().toISOString(),
-          input_method: 'manual'
-        }
+        metadata: metadataObj // Use the properly formatted metadata object
       };
       
-      console.log('Logging activity:', activityData);
+      console.log('Logging activity:', {
+        session_id: activityData.session_id,
+        activity_type: activityData.activity_type,
+        description: activityData.description
+      });
       
-      // Create new activity using the service
-      const result = await WorkProgressService.logActivity(activityData);
+      // Try to log activity with fallback mechanisms
+      const result = await logActivityWithFallbacks(activityData);
       
       if (result.error) {
+        // If there's a metadata error, try again without it
+        if (result.error.message?.includes('metadata') || result.error.details?.includes('metadata')) {
+          console.warn('Error with metadata field, attempting without it...');
+          
+          // Create a version without metadata
+          const simpleActivityData = { ...activityData };
+          delete simpleActivityData.metadata;
+          
+          const simpleResult = await logActivityWithFallbacks(simpleActivityData);
+          
+          if (!simpleResult.error) {
+            // Success with simple version
+            setShowSuccessFeedback(true);
+            setTimeout(() => setShowSuccessFeedback(false), 3000);
+            
+            setCurrentActivity(simpleResult.data);
+            setDescription('');
+            
+            // Focus back on the input field for the next entry
+            document.querySelector('input[placeholder="Describe your current activity..."]')?.focus();
+            
+            console.log('Activity logged successfully without metadata:', simpleResult.data);
+            setIsLogging(false);
+            return;
+          }
+        }
+        
         throw new Error(result.error.message || 'Failed to log activity');
       }
       
@@ -308,6 +501,12 @@ const ActivityTracker = ({ activeSession, onStartSession, onEndSession }) => {
         setSessionError('Session error: Your work session may have expired. Try refreshing the page.');
       } else if (error.message?.includes('network') || error.message?.includes('Network')) {
         setSessionError('Network error: Please check your internet connection and try again.');
+      } else if (error.message?.includes('404') || error.message?.includes('not found')) {
+        setSessionError('API endpoint not found. The server may be down or misconfigured. Please check your network settings or contact support.');
+      } else if (error.message?.includes('CORS') || error.message?.includes('cross-origin')) {
+        setSessionError('Cross-origin error: There may be a configuration issue with the server. Please contact support.');
+      } else if (error.message?.includes('metadata') || error.message?.includes('column')) {
+        setSessionError('Database error: There may be an issue with the activity data format. Please try a different description or contact support.');
       } else {
         setSessionError(error.message || 'Failed to log activity. Please try again.');
       }
@@ -346,7 +545,7 @@ const ActivityTracker = ({ activeSession, onStartSession, onEndSession }) => {
             Work Tracker
           </h4>
           <div className="activity-status">
-            {activeSession ? (
+            {hasActiveSession ? (
               <>
                 <div className={`status-indicator ${isTimerRunning ? 'active' : 'inactive'}`}></div>
                 <span>{isTimerRunning ? 'Working' : 'Paused'}</span>
@@ -374,9 +573,9 @@ const ActivityTracker = ({ activeSession, onStartSession, onEndSession }) => {
                 placeholder="Describe your current activity..."
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                disabled={!activeSession}
+                disabled={!hasActiveSession}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && activeSession && description.trim() && !isLogging) {
+                  if (e.key === 'Enter' && hasActiveSession && description.trim() && !isLogging) {
                     e.preventDefault();
                     handleStartActivity();
                   }
@@ -388,7 +587,7 @@ const ActivityTracker = ({ activeSession, onStartSession, onEndSession }) => {
             <Form.Group>
               <Form.Label>Activity Type</Form.Label>
               <Dropdown onSelect={handleActivityTypeSelect}>
-                <Dropdown.Toggle variant="outline-secondary" id="activity-type-dropdown" disabled={!activeSession}>
+                <Dropdown.Toggle variant="outline-secondary" id="activity-type-dropdown" disabled={!hasActiveSession}>
                   <FontAwesomeIcon icon={activityTypes.find(type => type.value === activityType)?.icon || faLaptopCode} className="me-2" />
                   {activityTypes.find(type => type.value === activityType)?.label || 'Work'}
                 </Dropdown.Toggle>
@@ -408,7 +607,7 @@ const ActivityTracker = ({ activeSession, onStartSession, onEndSession }) => {
               variant={showSuccessFeedback ? "success" : "primary"}
               className="w-100" 
               onClick={handleStartActivity}
-              disabled={!activeSession || !description.trim() || isLogging}
+              disabled={!hasActiveSession || !description.trim() || isLogging}
               aria-busy={isLogging}
               aria-live="polite"
               style={showSuccessFeedback ? styles.successButton : {}}
@@ -434,17 +633,29 @@ const ActivityTracker = ({ activeSession, onStartSession, onEndSession }) => {
           </Col>
         </Row>
         
-        {sessionError && (
+        {sessionError && !hasActiveSession && (
           <Row className="mt-2 mb-3">
             <Col>
-              <div className="text-danger">{sessionError}</div>
+              <Alert variant="danger" dismissible onClose={() => setSessionError(null)}>
+                {sessionError}
+              </Alert>
+            </Col>
+          </Row>
+        )}
+        
+        {sessionError && hasActiveSession && (
+          <Row className="mt-2 mb-3">
+            <Col>
+              <Alert variant="warning" dismissible onClose={() => setSessionError(null)}>
+                {sessionError}
+              </Alert>
             </Col>
           </Row>
         )}
         
         <Row>
           <Col>
-            {!activeSession ? (
+            {!hasActiveSession ? (
               // Start session button
               <Button variant="success" className="me-2" onClick={handleStartSession}>
                 <FontAwesomeIcon icon={faPlay} className="me-2" />
@@ -471,7 +682,7 @@ const ActivityTracker = ({ activeSession, onStartSession, onEndSession }) => {
               </>
             )}
           </Col>
-          {activeSession && (
+          {hasActiveSession && activeSession && (
             <Col className="text-end">
               <span className="text-muted">
                 <FontAwesomeIcon icon={faCalendarDay} className="me-1" />

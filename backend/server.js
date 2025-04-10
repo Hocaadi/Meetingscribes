@@ -284,6 +284,27 @@ app.use('/api/image', imageProcessingRoutes);
 // Work Progress routes
 app.use('/api/work-progress', workProgressRoutes);
 
+// Additional direct routes for fallback access
+app.post('/activities', (req, res) => {
+  // Modify req.url to match the route in workProgressRoutes
+  const originalUrl = req.url;
+  req.url = '/activities';
+  
+  // Log the request for debugging
+  console.log('Handling direct activity log via fallback route');
+  
+  // Use the router directly
+  workProgressRoutes(req, res, (err) => {
+    if (err) {
+      console.error('Error in fallback activity route:', err);
+      res.status(500).json({ error: 'Failed to process activity request', details: err.message });
+    }
+    
+    // Restore original URL if needed
+    req.url = originalUrl;
+  });
+});
+
 // AI routes with fallback
 try {
   const aiRoutes = require('./routes/aiRoutes');

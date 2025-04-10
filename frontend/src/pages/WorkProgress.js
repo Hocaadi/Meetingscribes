@@ -45,7 +45,14 @@ const WorkProgress = () => {
         
         // Load active work session if any
         const session = await WorkProgressService.getActiveWorkSession();
-        setActiveSession(session);
+        
+        if (session) {
+          console.log('Found active session:', session);
+          setActiveSession(session);
+        } else {
+          console.log('No active work session found');
+          setActiveSession(null);
+        }
         
         // Load user's tasks, filtered by active status
         const userTasks = await WorkProgressService.getTasks({ 
@@ -95,10 +102,11 @@ const WorkProgress = () => {
     
     loadInitialData();
     
-    // Set up a refresh interval for tasks
+    // Set up a refresh interval for the active session and tasks
     const refreshInterval = setInterval(() => {
       if (isSignedIn) {
         refreshTasks();
+        refreshActiveSession();
       }
     }, 60000); // Refresh every minute
     
@@ -116,6 +124,20 @@ const WorkProgress = () => {
       localStorage.setItem('tasks_backup', JSON.stringify(userTasks));
     } catch (err) {
       console.error('Error refreshing tasks:', err);
+      // Don't show error to user for background refreshes
+    }
+  };
+  
+  // Function to refresh the active session
+  const refreshActiveSession = async () => {
+    try {
+      console.log('Refreshing active session...');
+      const session = await WorkProgressService.getActiveWorkSession();
+      if (session) {
+        setActiveSession(session);
+      }
+    } catch (err) {
+      console.error('Error refreshing active session:', err);
       // Don't show error to user for background refreshes
     }
   };
