@@ -26,9 +26,9 @@
 }
 
 .nav-tabs .nav-link {
-  color: #495057;
-  border: 1px solid transparent;
-  font-weight: 600;
+  color: #000000;
+  border: 1px solid #dee2e6;
+  font-weight: 700;
   padding: 10px 20px;
   margin-right: 5px;
   background-color: #f8f9fa;
@@ -38,16 +38,17 @@
 }
 
 .nav-tabs .nav-link:hover {
-  color: #3498db;
-  border-color: #e9ecef #e9ecef #dee2e6;
-  background-color: #fff;
+  color: #000000;
+  border-color: #dee2e6 #dee2e6 #fff;
+  background-color: #e9ecef;
 }
 
 .nav-tabs .nav-link.active {
-  color: #3498db;
-  background-color: #fff;
-  border-color: #dee2e6 #dee2e6 #fff;
-  border-bottom: 2px solid #3498db;
+  color: #000000;
+  background-color: #ffffff;
+  border-color: #3498db #dee2e6 #fff;
+  border-top: 3px solid #3498db;
+  border-bottom: none;
 }
 
 .tab-content {
@@ -438,12 +439,14 @@
 }
 
 .tab-title {
-  font-weight: 600;
+  font-weight: 700;
   font-size: 16px;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 0 5px;
+  color: #000000;
+  text-shadow: 0 0 1px rgba(0,0,0,0.1);
 }
 
 .nav-tabs .nav-link:focus {
@@ -489,4 +492,36 @@
     font-size: 14px;
     white-space: nowrap;
   }
+}
+
+.card-header-tabs {
+  margin-right: 0;
+  margin-bottom: -1px;
+  margin-left: 0;
+  border-bottom: none;
+}
+
+.card-header-tabs .nav-link {
+  margin-right: 4px;
+  background-color: #f8f9fa;
+  border: 1px solid #dee2e6;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  color: #000000;
+  cursor: pointer;
+  font-weight: 700;
+  padding: 10px 20px;
+  transition: all 0.2s ease;
+}
+
+.card-header-tabs .nav-link:hover {
+  background-color: #e9ecef;
+  color: #000000;
+}
+
+.card-header-tabs .nav-link.active {
+  background-color: #ffffff;
+  color: #000000;
+  border-top: 3px solid #3498db;
+  border-bottom: none;
 } 
