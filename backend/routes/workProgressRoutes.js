@@ -924,4 +924,218 @@ Please provide a concise, factual answer based only on the information provided.
   }
 });
 
+/**
+ * Generate a brag sheet in PDF format from accomplishments
+ */
+router.post('/ai/generate-brag-sheet', authenticateJWT, async (req, res) => {
+  try {
+    const { user_id } = req.user;
+    const { accomplishments, time_period, format, target_audience, highlight_metrics } = req.body;
+    
+    console.log(`Generating brag sheet in ${format} format for user ${user_id}`);
+    
+    if (!accomplishments || !Array.isArray(accomplishments) || accomplishments.length === 0) {
+      return res.status(400).json({ error: 'No accomplishments provided' });
+    }
+    
+    // Generate content with AI first
+    const systemPrompt = "You are an AI assistant helping a professional create a brag sheet for career advancement. Focus on quantifiable achievements, skills demonstrated, and business impact.";
+    
+    const targetAudienceMap = {
+      'manager': 'your direct manager for a performance review',
+      'team': 'your team members to showcase your contributions',
+      'performance_review': 'a formal performance review document',
+      'resume': 'potential employers as resume content'
+    };
+    
+    const prompt = `Create a professional brag sheet based on the following accomplishments for the past ${time_period}:
+    
+${JSON.stringify(accomplishments.map(acc => ({
+  title: acc.title,
+  description: acc.description,
+  date: acc.accomplishment_date,
+  impact: acc.impact_level
+})), null, 2)}
+
+This document will be shared with ${targetAudienceMap[target_audience] || 'your manager'}.
+${highlight_metrics ? 'Please highlight quantifiable metrics and business impact where possible.' : ''}
+
+Please organize this into clear sections with:
+1. A professional summary at the top
+2. Key achievements organized by impact/importance
+3. Skills demonstrated
+4. Business impact summary
+
+Format the content to be ${format === 'plaintext' ? 'simple plain text' : format === 'html' ? 'with basic HTML formatting' : 'in markdown with headers and bullet points'}.`;
+
+    try {
+      // Call OpenAI API
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: prompt }
+        ],
+        max_tokens: 1000,
+        temperature: 0.7,
+      });
+      
+      const content = completion.choices[0].message.content;
+      
+      // Return as JSON if format is not PDF
+      if (format !== 'pdf') {
+        console.log(`Successfully generated ${format} brag sheet`);
+        return res.status(200).json({
+          content: content,
+          format: format
+        });
+      }
+      
+      // For PDF format, generate a PDF document using PDFKit
+      console.log(`Generating PDF brag sheet`);
+      const PDFDocument = require('pdfkit');
+      
+      // Create a document
+      const doc = new PDFDocument({
+        margins: { top: 50, bottom: 50, left: 50, right: 50 },
+        size: 'A4'
+      });
+      
+      // Set response headers for PDF download
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename=brag_sheet_${Date.now()}.pdf`);
+      
+      // Pipe the PDF directly to the response
+      doc.pipe(res);
+      
+      // Add company logo/header if available
+      // doc.image('path/to/logo.png', 50, 45, { width: 50 });
+      
+      // Set some basic styles
+      doc.font('Helvetica-Bold')
+         .fontSize(18)
+         .text('Professional Accomplishments', { align: 'center' });
+      
+      doc.moveDown();
+      doc.font('Helvetica')
+         .fontSize(12)
+         .text(`Time Period: ${time_period}`, { align: 'center' });
+      doc.text(`Generated on: ${new Date().toLocaleDateString()}`, { align: 'center' });
+      
+      doc.moveDown(2);
+      
+      // Function to add a section title
+      const addSectionTitle = (title) => {
+        doc.font('Helvetica-Bold')
+           .fontSize(14)
+           .text(title)
+           .moveDown(0.5);
+      };
+      
+      // Process the content based on its structure (assuming markdown)
+      const contentLines = content.split('\n');
+      let currentSection = '';
+      
+      contentLines.forEach(line => {
+        // Check if this is a header
+        if (line.startsWith('# ')) {
+          addSectionTitle(line.substring(2));
+          currentSection = line.substring(2);
+        } 
+        else if (line.startsWith('## ')) {
+          doc.font('Helvetica-Bold')
+             .fontSize(12)
+             .text(line.substring(3))
+             .moveDown(0.5);
+        }
+        // Check if this is a bullet point
+        else if (line.trim().startsWith('- ') || line.trim().startsWith('* ')) {
+          doc.font('Helvetica')
+             .fontSize(11)
+             .text(line.trim().substring(2), { 
+               indent: 20,
+               continued: false
+             });
+        }
+        // Regular text
+        else if (line.trim() !== '') {
+          doc.font('Helvetica')
+             .fontSize(11)
+             .text(line.trim());
+        } 
+        // Add space for empty lines
+        else if (line.trim() === '') {
+          doc.moveDown(0.5);
+        }
+      });
+      
+      // Add accomplishments list in a structured way
+      addSectionTitle('Detailed Accomplishments');
+      
+      doc.font('Helvetica')
+         .fontSize(11)
+         .text('The following accomplishments were used to generate this report:', { 
+           continued: false 
+         });
+      
+      doc.moveDown();
+      
+      // Add each accomplishment
+      accomplishments.forEach((acc, index) => {
+        const impactColors = {
+          'low': '#6c757d',
+          'medium': '#0d6efd',
+          'high': '#198754',
+          'critical': '#dc3545'
+        };
+        
+        doc.font('Helvetica-Bold')
+           .fontSize(11)
+           .text(`${index + 1}. ${acc.title}`);
+        
+        doc.font('Helvetica')
+           .fontSize(10)
+           .fillColor(impactColors[acc.impact_level] || '#000000')
+           .text(`Impact: ${acc.impact_level.charAt(0).toUpperCase() + acc.impact_level.slice(1)}`, {
+             continued: false
+           })
+           .fillColor('#000000');
+        
+        doc.fontSize(10)
+           .text(`Date: ${new Date(acc.accomplishment_date).toLocaleDateString()}`, {
+             continued: false
+           });
+        
+        doc.fontSize(10)
+           .text(acc.description, {
+             continued: false,
+             paragraphGap: 5
+           });
+        
+        doc.moveDown();
+      });
+      
+      // Add a footer
+      doc.fontSize(8)
+         .text(
+           'This document was generated by MeetingScribe Work Progress AI. ' +
+           'The content is based on the user\'s recorded accomplishments.',
+           50, doc.page.height - 50,
+           { align: 'center', width: doc.page.width - 100 }
+         );
+      
+      // Finalize the PDF
+      console.log('Sending PDF brag sheet to client');
+      doc.end();
+      
+    } catch (aiError) {
+      console.error('Error calling OpenAI API or generating PDF:', aiError);
+      return res.status(500).json({ error: 'Failed to generate brag sheet', details: aiError.message });
+    }
+  } catch (error) {
+    console.error('Error in POST /ai/generate-brag-sheet route:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 module.exports = router; 

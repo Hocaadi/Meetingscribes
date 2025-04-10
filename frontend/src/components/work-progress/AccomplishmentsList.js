@@ -8,7 +8,9 @@ import {
   Badge, 
   InputGroup, 
   Modal,
-  Dropdown
+  Dropdown,
+  Alert,
+  Spinner
 } from 'react-bootstrap';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { 
@@ -23,6 +25,8 @@ import {
 } from '@fortawesome/free-solid-svg-icons';
 import WorkProgressService from '../../services/WorkProgressService';
 import WorkAIService from '../../services/WorkAIService';
+import axios from 'axios';
+import config from '../../config';
 
 /**
  * AccomplishmentsList component for displaying and managing accomplishments
@@ -118,17 +122,145 @@ const AccomplishmentsList = ({ accomplishments, dateRange, onDateRangeChange }) 
     try {
       setGeneratingBragSheet(true);
       
-      const result = await WorkAIService.generateBragSheet(
-        filteredAccomplishments,
-        bragSheetOptions
-      );
+      console.log('Starting brag sheet generation with options:', bragSheetOptions);
+      console.log('Using filtered accomplishments:', filteredAccomplishments.length);
       
-      setBragSheetContent(result.content);
+      // Define endpoints to try in order - local, then production fallback
+      const endpoints = [
+        `${config.API_URL}/api/work-progress/ai/generate-brag-sheet`,
+        `${config.API_URL}/api/ai/generate-brag-sheet`,
+        `https://meetingscribe-backend.onrender.com/api/work-progress/ai/generate-brag-sheet`,
+        `https://meetingscribe-backend.onrender.com/api/ai/generate-brag-sheet`
+      ];
+      
+      let lastError = null;
+      
+      if (bragSheetOptions.format === 'pdf') {
+        // For PDF format, try multiple endpoints with blob response
+        for (const endpoint of endpoints) {
+          try {
+            console.log(`Attempting PDF generation with endpoint: ${endpoint}`);
+            
+            const response = await axios({
+              url: endpoint,
+              method: 'POST',
+              data: {
+                accomplishments: filteredAccomplishments,
+                ...bragSheetOptions
+              },
+              responseType: 'blob', // Important for handling binary data
+              withCredentials: true,
+              timeout: 30000 // Longer timeout for PDF generation
+            });
+            
+            console.log(`Success with endpoint: ${endpoint}`);
+            
+            // Create a URL for the blob
+            const url = window.URL.createObjectURL(new Blob([response.data]));
+            
+            // Create a temporary link element to trigger the download
+            const link = document.createElement('a');
+            link.href = url;
+            link.setAttribute('download', `brag_sheet_${Date.now()}.pdf`);
+            document.body.appendChild(link);
+            link.click();
+            
+            // Clean up
+            window.URL.revokeObjectURL(url);
+            link.remove();
+            
+            // Set an indication that it was generated
+            setBragSheetContent('PDF generated and downloaded successfully!');
+            return; // Exit after successful generation
+          } catch (error) {
+            console.error(`Failed with endpoint ${endpoint}:`, error);
+            lastError = error;
+            // Continue to the next endpoint
+          }
+        }
+        
+        // If we reach here, all endpoints failed
+        throw lastError || new Error('All PDF generation endpoints failed');
+      } else {
+        // For non-PDF formats
+        for (const endpoint of endpoints) {
+          try {
+            console.log(`Attempting ${bragSheetOptions.format} generation with endpoint: ${endpoint}`);
+            
+            const response = await axios.post(endpoint, {
+              accomplishments: filteredAccomplishments,
+              ...bragSheetOptions
+            }, {
+              headers: {
+                'Content-Type': 'application/json'
+              },
+              withCredentials: true,
+              timeout: 20000
+            });
+            
+            console.log(`Success with endpoint: ${endpoint}`);
+            setBragSheetContent(response.data.content);
+            return; // Exit after successful generation
+          } catch (error) {
+            console.error(`Failed with endpoint ${endpoint}:`, error);
+            lastError = error;
+            // Continue to the next endpoint
+          }
+        }
+        
+        // If all endpoints fail, try using the WorkAIService as fallback
+        try {
+          console.log('Trying WorkAIService as fallback');
+          const result = await WorkAIService.generateBragSheet(
+            filteredAccomplishments,
+            bragSheetOptions
+          );
+          
+          setBragSheetContent(result.content);
+          return;
+        } catch (serviceError) {
+          console.error('WorkAIService fallback failed:', serviceError);
+          lastError = serviceError;
+        }
+        
+        // If we reach here, everything failed
+        throw lastError || new Error('All brag sheet generation attempts failed');
+      }
     } catch (error) {
       console.error('Error generating brag sheet:', error);
+      
+      // Create a friendly error message
+      const errorMessage = error.response ? 
+        `Server error: ${error.response.status} ${error.response.statusText}` : 
+        `Error: ${error.message || 'Unknown error'}`;
+      
+      setBragSheetContent(`Failed to generate brag sheet. ${errorMessage}\n\nPlease try again or use a different format.`);
     } finally {
       setGeneratingBragSheet(false);
     }
+  };
+  
+  // Handle download button for non-PDF formats
+  const handleDownloadBragSheet = () => {
+    // Create a blob with the content
+    const blob = new Blob([bragSheetContent], { type: 'text/plain' });
+    const url = window.URL.createObjectURL(blob);
+    
+    // Create a link and trigger download
+    const link = document.createElement('a');
+    link.href = url;
+    
+    // Set appropriate filename and extension based on format
+    const extension = bragSheetOptions.format === 'html' ? 'html' : 
+                      bragSheetOptions.format === 'markdown' ? 'md' : 'txt';
+    
+    link.setAttribute('download', `brag_sheet_${Date.now()}.${extension}`);
+    document.body.appendChild(link);
+    link.click();
+    
+    // Clean up
+    window.URL.revokeObjectURL(url);
+    link.remove();
   };
   
   // Handle brag sheet option changes
@@ -405,80 +537,148 @@ const AccomplishmentsList = ({ accomplishments, dateRange, onDateRangeChange }) 
           <Modal.Title>Generate Brag Sheet</Modal.Title>
         </Modal.Header>
         <Modal.Body>
-          <Row className="mb-3">
-            <Col md={4}>
-              <Form.Group>
-                <Form.Label>Time Period</Form.Label>
-                <Form.Select 
-                  name="time_period" 
-                  value={bragSheetOptions.time_period}
-                  onChange={handleBragSheetOptionChange}
+          {filteredAccomplishments.length === 0 ? (
+            <Alert variant="warning">
+              <Alert.Heading>No Accomplishments Selected</Alert.Heading>
+              <p>
+                You need to have at least one accomplishment selected to generate a brag sheet.
+                Please adjust your filters or add new accomplishments.
+              </p>
+            </Alert>
+          ) : (
+            <>
+              <Row className="mb-3">
+                <Col md={4}>
+                  <Form.Group>
+                    <Form.Label>Time Period</Form.Label>
+                    <Form.Select 
+                      name="time_period" 
+                      value={bragSheetOptions.time_period}
+                      onChange={handleBragSheetOptionChange}
+                      disabled={generatingBragSheet}
+                    >
+                      <option value="1 month">Past Month</option>
+                      <option value="3 months">Past 3 Months</option>
+                      <option value="6 months">Past 6 Months</option>
+                      <option value="1 year">Past Year</option>
+                    </Form.Select>
+                  </Form.Group>
+                </Col>
+                <Col md={4}>
+                  <Form.Group>
+                    <Form.Label>Format</Form.Label>
+                    <Form.Select 
+                      name="format" 
+                      value={bragSheetOptions.format}
+                      onChange={handleBragSheetOptionChange}
+                      disabled={generatingBragSheet}
+                    >
+                      <option value="markdown">Markdown</option>
+                      <option value="plaintext">Plain Text</option>
+                      <option value="html">HTML</option>
+                      <option value="pdf">PDF</option>
+                    </Form.Select>
+                    {bragSheetOptions.format === 'pdf' && (
+                      <Form.Text className="text-muted">
+                        PDF will download automatically when generated
+                      </Form.Text>
+                    )}
+                  </Form.Group>
+                </Col>
+                <Col md={4}>
+                  <Form.Group>
+                    <Form.Label>Target Audience</Form.Label>
+                    <Form.Select 
+                      name="target_audience" 
+                      value={bragSheetOptions.target_audience}
+                      onChange={handleBragSheetOptionChange}
+                      disabled={generatingBragSheet}
+                    >
+                      <option value="manager">Manager</option>
+                      <option value="team">Team</option>
+                      <option value="performance_review">Performance Review</option>
+                      <option value="resume">Resume</option>
+                    </Form.Select>
+                  </Form.Group>
+                </Col>
+              </Row>
+              
+              <div className="d-grid gap-2 mb-3">
+                <Button 
+                  variant="primary" 
+                  onClick={handleGenerateBragSheet}
+                  disabled={generatingBragSheet || filteredAccomplishments.length === 0}
                 >
-                  <option value="1 month">Past Month</option>
-                  <option value="3 months">Past 3 Months</option>
-                  <option value="6 months">Past 6 Months</option>
-                  <option value="1 year">Past Year</option>
-                </Form.Select>
-              </Form.Group>
-            </Col>
-            <Col md={4}>
-              <Form.Group>
-                <Form.Label>Format</Form.Label>
-                <Form.Select 
-                  name="format" 
-                  value={bragSheetOptions.format}
-                  onChange={handleBragSheetOptionChange}
-                >
-                  <option value="markdown">Markdown</option>
-                  <option value="plaintext">Plain Text</option>
-                  <option value="html">HTML</option>
-                </Form.Select>
-              </Form.Group>
-            </Col>
-            <Col md={4}>
-              <Form.Group>
-                <Form.Label>Target Audience</Form.Label>
-                <Form.Select 
-                  name="target_audience" 
-                  value={bragSheetOptions.target_audience}
-                  onChange={handleBragSheetOptionChange}
-                >
-                  <option value="manager">Manager</option>
-                  <option value="team">Team</option>
-                  <option value="performance_review">Performance Review</option>
-                  <option value="resume">Resume</option>
-                </Form.Select>
-              </Form.Group>
-            </Col>
-          </Row>
-          
-          <div className="d-grid gap-2 mb-3">
-            <Button 
-              variant="primary" 
-              onClick={handleGenerateBragSheet}
-              disabled={generatingBragSheet || filteredAccomplishments.length === 0}
-            >
-              {generatingBragSheet ? 'Generating...' : 'Generate Brag Sheet'}
-            </Button>
-          </div>
-          
-          {bragSheetContent && (
-            <Card className="mt-3">
-              <Card.Header>
-                <div className="d-flex justify-content-between align-items-center">
-                  <h6 className="mb-0">Your Brag Sheet</h6>
-                  <Button variant="outline-secondary" size="sm">
-                    <FontAwesomeIcon icon={faDownload} className="me-1" />
-                    Download
-                  </Button>
-                </div>
-              </Card.Header>
-              <Card.Body>
-                <pre className="brag-sheet-content" style={{ whiteSpace: 'pre-wrap' }}>
-                  {bragSheetContent}
-                </pre>
-              </Card.Body>
-            </Card>
+                  {generatingBragSheet ? (
+                    <>
+                      <Spinner animation="border" size="sm" role="status" className="me-2" />
+                      Generating Brag Sheet...
+                    </>
+                  ) : (
+                    'Generate Brag Sheet'
+                  )}
+                </Button>
+              </div>
+              
+              {generatingBragSheet && (
+                <Alert variant="info">
+                  <Alert.Heading>Generating Your Brag Sheet</Alert.Heading>
+                  <p>
+                    Please wait while we generate your brag sheet. This may take up to 30 seconds
+                    depending on the number of accomplishments and the selected format.
+                  </p>
+                  <div className="d-flex justify-content-center">
+                    <Spinner animation="border" role="status">
+                      <span className="visually-hidden">Loading...</span>
+                    </Spinner>
+                  </div>
+                </Alert>
+              )}
+              
+              {bragSheetContent && bragSheetContent.includes('Error') && (
+                <Alert variant="danger">
+                  <Alert.Heading>Error Generating Brag Sheet</Alert.Heading>
+                  <p>{bragSheetContent}</p>
+                  <hr />
+                  <p className="mb-0">
+                    Try selecting a different format or try again later. If the problem persists,
+                    contact support.
+                  </p>
+                </Alert>
+              )}
+              
+              {bragSheetContent && !bragSheetContent.includes('Error') && (
+                <Card className="mt-3">
+                  <Card.Header>
+                    <div className="d-flex justify-content-between align-items-center">
+                      <h6 className="mb-0">Your Brag Sheet</h6>
+                      <Button 
+                        variant="outline-secondary" 
+                        size="sm"
+                        onClick={handleDownloadBragSheet}
+                        disabled={!bragSheetContent || bragSheetOptions.format === 'pdf'}
+                      >
+                        <FontAwesomeIcon icon={faDownload} className="me-1" />
+                        Download
+                      </Button>
+                    </div>
+                  </Card.Header>
+                  <Card.Body>
+                    {bragSheetOptions.format === 'pdf' ? (
+                      <Alert variant="success">
+                        <Alert.Heading>PDF Generated!</Alert.Heading>
+                        <p>Your PDF brag sheet has been generated and should have downloaded automatically.</p>
+                        <p>If the download didn't start, click the generate button again.</p>
+                      </Alert>
+                    ) : (
+                      <pre className="brag-sheet-content" style={{ whiteSpace: 'pre-wrap' }}>
+                        {bragSheetContent}
+                      </pre>
+                    )}
+                  </Card.Body>
+                </Card>
+              )}
+            </>
           )}
         </Modal.Body>
       </Modal>
