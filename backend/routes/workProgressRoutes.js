@@ -1138,4 +1138,169 @@ Format the content to be ${format === 'plaintext' ? 'simple plain text' : format
   }
 });
 
+/**
+ * Log a new activity
+ */
+router.post('/activities', authenticateJWT, async (req, res) => {
+  try {
+    const { user_id } = req.user;
+    const { session_id, task_id, activity_type, description, start_time } = req.body;
+    
+    // Validate required fields
+    if (!session_id) {
+      return res.status(400).json({ error: 'Session ID is required' });
+    }
+    
+    if (!description || description.trim() === '') {
+      return res.status(400).json({ error: 'Description is required' });
+    }
+    
+    // Verify the session exists and belongs to the user
+    const { data: sessionData, error: sessionError } = await supabase
+      .from('work_sessions')
+      .select('*')
+      .eq('id', session_id)
+      .eq('user_id', user_id)
+      .single();
+    
+    if (sessionError || !sessionData) {
+      console.error('Session validation failed:', sessionError);
+      return res.status(404).json({ error: 'Work session not found or unauthorized' });
+    }
+    
+    // Check if session is active
+    if (sessionData.status !== 'active' && sessionData.end_time) {
+      return res.status(400).json({ error: 'Cannot log activity to an inactive session' });
+    }
+    
+    // Create the activity log
+    const activityData = {
+      session_id,
+      user_id,
+      task_id: task_id || null,
+      activity_type: activity_type || 'work',
+      description: description.trim(),
+      start_time: start_time || new Date().toISOString(),
+      metadata: req.body.metadata || {
+        source: 'api',
+        client_ip: req.ip,
+        user_agent: req.headers['user-agent']
+      }
+    };
+    
+    const { data, error } = await supabase
+      .from('activity_logs')
+      .insert([activityData])
+      .select('*')
+      .single();
+    
+    if (error) {
+      console.error('Error logging activity:', error);
+      return res.status(500).json({ error: 'Failed to log activity', details: error.message });
+    }
+    
+    return res.status(201).json({
+      activity: data,
+      message: 'Activity logged successfully'
+    });
+  } catch (error) {
+    console.error('Error in POST /activities route:', error);
+    return res.status(500).json({ error: 'Internal server error', details: error.message });
+  }
+});
+
+/**
+ * End an activity
+ */
+router.put('/activities/:id/end', authenticateJWT, async (req, res) => {
+  try {
+    const { user_id } = req.user;
+    const { id } = req.params;
+    const { end_time } = req.body;
+    
+    // Verify activity ownership
+    const { data: activityData, error: activityError } = await supabase
+      .from('activity_logs')
+      .select('*')
+      .eq('id', id)
+      .single();
+    
+    if (activityError || !activityData) {
+      return res.status(404).json({ error: 'Activity not found' });
+    }
+    
+    // Verify user has permission to end this activity (via session ownership)
+    const { data: sessionData, error: sessionError } = await supabase
+      .from('work_sessions')
+      .select('user_id')
+      .eq('id', activityData.session_id)
+      .single();
+    
+    if (sessionError || !sessionData || sessionData.user_id !== user_id) {
+      return res.status(403).json({ error: 'Unauthorized to end this activity' });
+    }
+    
+    // End the activity
+    const { data, error } = await supabase
+      .from('activity_logs')
+      .update({
+        end_time: end_time || new Date().toISOString()
+      })
+      .eq('id', id)
+      .select('*')
+      .single();
+    
+    if (error) {
+      console.error('Error ending activity:', error);
+      return res.status(500).json({ error: 'Failed to end activity' });
+    }
+    
+    return res.status(200).json({
+      activity: data,
+      message: 'Activity ended successfully'
+    });
+  } catch (error) {
+    console.error('Error in PUT /activities/:id/end route:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * Get activities for a session
+ */
+router.get('/sessions/:sessionId/activities', authenticateJWT, async (req, res) => {
+  try {
+    const { user_id } = req.user;
+    const { sessionId } = req.params;
+    
+    // Verify session ownership
+    const { data: sessionData, error: sessionError } = await supabase
+      .from('work_sessions')
+      .select('user_id')
+      .eq('id', sessionId)
+      .single();
+    
+    if (sessionError || !sessionData || sessionData.user_id !== user_id) {
+      return res.status(403).json({ error: 'Unauthorized to view this session\'s activities' });
+    }
+    
+    // Get activities for the session
+    const { data, error } = await supabase
+      .from('activity_logs')
+      .select('*')
+      .eq('session_id', sessionId)
+      .order('start_time', { ascending: true });
+    
+    if (error) {
+      console.error('Error fetching activities:', error);
+      return res.status(500).json({ error: 'Failed to fetch activities' });
+    }
+    
+    return res.status(200).json(data);
+  } catch (error) {
+    console.error('Error in GET /sessions/:sessionId/activities route:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 module.exports = router; 

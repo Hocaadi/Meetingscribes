@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Card, Button, Form, Row, Col, Dropdown } from 'react-bootstrap';
+import { Card, Button, Form, Row, Col, Dropdown, OverlayTrigger, Tooltip } from 'react-bootstrap';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { 
   faPlay, 
@@ -13,9 +13,53 @@ import {
   faUsers,
   faTasks,
   faFileAlt,
-  faEllipsisH
+  faEllipsisH,
+  faKeyboard
 } from '@fortawesome/free-solid-svg-icons';
 import WorkProgressService from '../../services/WorkProgressService';
+
+// CSS styles for enhanced visual feedback
+const styles = {
+  activityTracker: {
+    boxShadow: '0 2px 10px rgba(0, 0, 0, 0.1)',
+    borderRadius: '8px',
+    transition: 'all 0.3s ease'
+  },
+  successButton: {
+    animation: 'pulse 1.5s',
+    boxShadow: '0 0 0 0 rgba(40, 167, 69, 0.7)',
+    transition: 'background-color 0.3s, transform 0.2s',
+    transform: 'scale(1.05)'
+  },
+  activityCard: {
+    backgroundColor: '#f8f9fa',
+    borderLeft: '4px solid #007bff',
+    borderRadius: '4px',
+    padding: '12px',
+    marginTop: '10px',
+    transition: 'all 0.3s ease'
+  },
+  timerDisplay: {
+    fontSize: '2rem',
+    fontWeight: 'bold',
+    textAlign: 'center',
+    margin: '15px 0',
+    fontFamily: 'monospace'
+  },
+  keyboardShortcut: {
+    fontSize: '0.8rem',
+    color: '#6c757d',
+    marginLeft: '5px'
+  }
+};
+
+// Define keyboard shortcuts helper component
+const KeyboardShortcut = ({ keys }) => (
+  <span style={styles.keyboardShortcut}>
+    <FontAwesomeIcon icon={faKeyboard} size="xs" className="me-1" />
+    {keys}
+  </span>
+);
 
 /**
  * Activity Tracker component for tracking work sessions and activities
@@ -34,6 +78,7 @@ const ActivityTracker = ({ activeSession, onStartSession, onEndSession }) => {
   const timerRef = useRef(null);
   const startTimeRef = useRef(null);
   const pausedTimeRef = useRef(0);
+  const inputRef = useRef(null);
   
   // Activity type options
   const activityTypes = [
@@ -44,6 +89,10 @@ const ActivityTracker = ({ activeSession, onStartSession, onEndSession }) => {
     { value: 'break', label: 'Break', icon: faMugHot },
     { value: 'other', label: 'Other', icon: faEllipsisH }
   ];
+  
+  // Add these state declarations at the top with the other state variables
+  const [isLogging, setIsLogging] = useState(false);
+  const [showSuccessFeedback, setShowSuccessFeedback] = useState(false);
   
   // Format timer values to two digits
   const formatTime = (value) => {
@@ -126,6 +175,30 @@ const ActivityTracker = ({ activeSession, onStartSession, onEndSession }) => {
     };
   }, [activeSession]);
   
+  // Add global keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      // Alt+L to log activity if session is active
+      if (e.altKey && e.key === 'l' && activeSession && description.trim() && !isLogging) {
+        e.preventDefault();
+        handleStartActivity();
+      }
+      // Alt+P to pause/resume timer if session is active
+      else if (e.altKey && e.key === 'p' && activeSession) {
+        e.preventDefault();
+        isTimerRunning ? pauseTimer() : startTimer();
+      }
+      // Alt+S to start session if no active session
+      else if (e.altKey && e.key === 's' && !activeSession) {
+        e.preventDefault();
+        handleStartSession();
+      }
+    };
+    
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [activeSession, description, isLogging, isTimerRunning]);
+  
   // Handle session start
   const handleStartSession = async () => {
     try {
@@ -164,42 +237,108 @@ const ActivityTracker = ({ activeSession, onStartSession, onEndSession }) => {
   
   // Start a new activity
   const handleStartActivity = async () => {
-    if (!activeSession || !description.trim()) return;
+    if (!activeSession) {
+      setSessionError('No active work session. Please start a session first.');
+      return;
+    }
+    
+    const trimmedDescription = description.trim();
+    if (!trimmedDescription) {
+      setSessionError('Please enter a description of what you are working on');
+      return;
+    }
+    
+    if (trimmedDescription.length < 3) {
+      setSessionError('Description must be at least 3 characters long');
+      return;
+    }
     
     try {
+      setIsLogging(true);
+      setSessionError(null);
+      
       // End current activity if exists
       if (currentActivity) {
-        await handleEndActivity();
+        const endResult = await handleEndActivity();
+        if (endResult?.error) {
+          console.warn('Warning: Failed to end previous activity:', endResult.error);
+          // Continue anyway - we'll still try to log the new activity
+        }
       }
       
-      // Create new activity
-      const activity = await WorkProgressService.logActivity({
+      // Format the activity data to ensure it's complete
+      const activityData = {
         session_id: activeSession.id,
         activity_type: activityType,
-        description: description
-      });
+        description: trimmedDescription,
+        start_time: new Date().toISOString(),
+        metadata: {
+          source: 'activity_tracker',
+          client_timestamp: new Date().toISOString(),
+          input_method: 'manual'
+        }
+      };
       
-      setCurrentActivity(activity);
+      console.log('Logging activity:', activityData);
+      
+      // Create new activity using the service
+      const result = await WorkProgressService.logActivity(activityData);
+      
+      if (result.error) {
+        throw new Error(result.error.message || 'Failed to log activity');
+      }
+      
+      // Show success feedback
+      setShowSuccessFeedback(true);
+      setTimeout(() => setShowSuccessFeedback(false), 3000);
+      
+      setCurrentActivity(result.data);
       setDescription('');
+      
+      // Focus back on the input field for the next entry
+      document.querySelector('input[placeholder="Describe your current activity..."]')?.focus();
+      
+      // Log to console for debugging
+      console.log('Activity logged successfully:', result.data);
     } catch (error) {
-      console.error('Error starting activity:', error);
+      console.error('Error logging activity:', error);
+      
+      // Provide more helpful error messages based on common error patterns
+      if (error.message?.includes('session') || error.message?.includes('Session')) {
+        setSessionError('Session error: Your work session may have expired. Try refreshing the page.');
+      } else if (error.message?.includes('network') || error.message?.includes('Network')) {
+        setSessionError('Network error: Please check your internet connection and try again.');
+      } else {
+        setSessionError(error.message || 'Failed to log activity. Please try again.');
+      }
+    } finally {
+      setIsLogging(false);
     }
   };
   
   // End the current activity
   const handleEndActivity = async () => {
-    if (!currentActivity) return;
+    if (!currentActivity) return { success: false, error: 'No active activity to end' };
     
     try {
-      await WorkProgressService.endActivity(currentActivity.id);
+      console.log('Ending activity:', currentActivity.id);
+      const result = await WorkProgressService.endActivity(currentActivity.id);
+      
+      if (result.error) {
+        console.error('Error ending activity:', result.error);
+        return { success: false, error: result.error };
+      }
+      
       setCurrentActivity(null);
+      return { success: true, data: result.data };
     } catch (error) {
-      console.error('Error ending activity:', error);
+      console.error('Error in handleEndActivity:', error);
+      return { success: false, error: error.message || 'Failed to end activity' };
     }
   };
   
   return (
-    <Card className="activity-tracker">
+    <Card className="activity-tracker" style={styles.activityTracker}>
       <Card.Body>
         <div className="activity-tracker-header">
           <h4 className="mb-0">
@@ -221,7 +360,7 @@ const ActivityTracker = ({ activeSession, onStartSession, onEndSession }) => {
           </div>
         </div>
         
-        <div className="timer-display">
+        <div className="timer-display" style={styles.timerDisplay}>
           {formatTime(timer.hours)}:{formatTime(timer.minutes)}:{formatTime(timer.seconds)}
         </div>
         
@@ -230,11 +369,18 @@ const ActivityTracker = ({ activeSession, onStartSession, onEndSession }) => {
             <Form.Group>
               <Form.Label>What are you working on?</Form.Label>
               <Form.Control
+                ref={inputRef}
                 type="text"
                 placeholder="Describe your current activity..."
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 disabled={!activeSession}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && activeSession && description.trim() && !isLogging) {
+                    e.preventDefault();
+                    handleStartActivity();
+                  }
+                }}
               />
             </Form.Group>
           </Col>
@@ -259,13 +405,31 @@ const ActivityTracker = ({ activeSession, onStartSession, onEndSession }) => {
           </Col>
           <Col md={2}>
             <Button 
-              variant="primary" 
+              variant={showSuccessFeedback ? "success" : "primary"}
               className="w-100" 
               onClick={handleStartActivity}
-              disabled={!activeSession || !description.trim()}
+              disabled={!activeSession || !description.trim() || isLogging}
+              aria-busy={isLogging}
+              aria-live="polite"
+              style={showSuccessFeedback ? styles.successButton : {}}
             >
-              <FontAwesomeIcon icon={faCheckCircle} className="me-2" />
-              Log
+              {isLogging ? (
+                <>
+                  <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                  Logging...
+                </>
+              ) : showSuccessFeedback ? (
+                <>
+                  <FontAwesomeIcon icon={faCheckCircle} className="me-2" />
+                  Logged!
+                </>
+              ) : (
+                <>
+                  <FontAwesomeIcon icon={faCheckCircle} className="me-2" />
+                  Log
+                  <KeyboardShortcut keys="Alt+L" />
+                </>
+              )}
             </Button>
           </Col>
         </Row>
@@ -320,7 +484,7 @@ const ActivityTracker = ({ activeSession, onStartSession, onEndSession }) => {
         {currentActivity && (
           <Row className="mt-3">
             <Col>
-              <div className="current-activity p-2 bg-light rounded border">
+              <div className="current-activity" style={styles.activityCard}>
                 <small className="text-muted">Currently working on:</small>
                 <p className="mb-0">
                   <FontAwesomeIcon 

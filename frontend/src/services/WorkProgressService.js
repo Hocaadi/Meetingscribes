@@ -1,5 +1,7 @@
 import supabase from '../supabaseClient';
 import { v4 as uuidv4 } from 'uuid';
+import axios from 'axios';
+import config from '../config';
 
 /**
  * Service for interacting with the Work & Progress module's data in Supabase
@@ -511,75 +513,148 @@ class WorkProgressService {
   // -------- ACTIVITY LOGS -------- //
   
   /**
-   * Log a new activity
-   * @param {Object} activity - Activity data
-   * @returns {Promise<Object>} The created activity log
+   * Log an activity for a work session
+   * @param {Object} payload - Activity payload
+   * @param {string} payload.session_id - ID of the session
+   * @param {string} [payload.task_id] - ID of the task (optional)
+   * @param {string} payload.description - Description of the activity
+   * @param {string} [payload.activity_type] - Type of activity
+   * @param {string} [payload.start_time] - Start time of the activity
+   * @returns {Promise<Object>} - The logged activity data
    */
-  async logActivity(activity) {
+  async logActivity(payload) {
     try {
-      const { data, error } = await supabase
-        .from('activity_logs')
-        .insert([{
-          session_id: activity.session_id,
-          task_id: activity.task_id,
-          activity_type: activity.activity_type,
-          description: activity.description,
-          start_time: activity.start_time || new Date().toISOString()
-        }])
-        .select('*')
-        .single();
+      // Input validation
+      if (!payload) {
+        throw new Error('Activity data is required');
+      }
       
-      if (error) throw error;
-      return data;
+      if (!payload.session_id) {
+        throw new Error('Session ID is required');
+      }
+      
+      if (!payload.description || payload.description.trim() === '') {
+        throw new Error('Description is required');
+      }
+      
+      // Use the backend API endpoint instead of direct Supabase calls
+      const response = await axios.post(
+        `${config.API_URL}/activities`, 
+        payload,
+        {
+          headers: {
+            Authorization: `Bearer ${await this.getAuthToken()}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+      
+      console.log('Activity logged successfully:', response.data.activity);
+      
+      return {
+        data: response.data.activity,
+        error: null
+      };
     } catch (error) {
       console.error('Error logging activity:', error);
-      throw error;
+      
+      // Format error response to match previous structure
+      return {
+        data: null,
+        error: {
+          message: error.response?.data?.error || error.message || 'Failed to log activity',
+          details: error.response?.data?.details || error.toString()
+        }
+      };
     }
   }
   
   /**
-   * End an activity
+   * End an activity by ID
    * @param {string} activityId - ID of the activity to end
-   * @returns {Promise<Object>} The updated activity log
+   * @returns {Promise<Object>} - The updated activity data
    */
   async endActivity(activityId) {
     try {
-      const { data, error } = await supabase
-        .from('activity_logs')
-        .update({
-          end_time: new Date().toISOString()
-        })
-        .eq('id', activityId)
-        .select('*')
-        .single();
+      if (!activityId) {
+        throw new Error('Activity ID is required');
+      }
       
-      if (error) throw error;
-      return data;
+      const response = await axios.put(
+        `${config.API_URL}/activities/${activityId}/end`,
+        { end_time: new Date().toISOString() },
+        {
+          headers: {
+            Authorization: `Bearer ${await this.getAuthToken()}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+      
+      console.log('Activity ended successfully:', response.data.activity);
+      
+      return {
+        data: response.data.activity,
+        error: null
+      };
     } catch (error) {
       console.error('Error ending activity:', error);
-      throw error;
+      
+      return {
+        data: null,
+        error: {
+          message: error.response?.data?.error || error.message || 'Failed to end activity',
+          details: error.response?.data?.details || error.toString()
+        }
+      };
     }
   }
   
   /**
    * Get activities for a specific session
-   * @param {string} sessionId - ID of the work session
-   * @returns {Promise<Array>} Activities in the session
+   * @param {string} sessionId - ID of the session
+   * @returns {Promise<Object>} - Session activities data
    */
-  async getActivitiesBySession(sessionId) {
+  async getSessionActivities(sessionId) {
     try {
-      const { data, error } = await supabase
-        .from('activity_logs')
-        .select('*')
-        .eq('session_id', sessionId)
-        .order('start_time', { ascending: true });
+      if (!sessionId) {
+        throw new Error('Session ID is required');
+      }
       
-      if (error) throw error;
-      return data || [];
+      const response = await axios.get(
+        `${config.API_URL}/sessions/${sessionId}/activities`,
+        {
+          headers: {
+            Authorization: `Bearer ${await this.getAuthToken()}`
+          }
+        }
+      );
+      
+      return {
+        data: response.data.activities,
+        error: null
+      };
     } catch (error) {
-      console.error('Error getting activities by session:', error);
-      return [];
+      console.error('Error fetching session activities:', error);
+      
+      return {
+        data: null,
+        error: {
+          message: error.response?.data?.error || error.message || 'Failed to fetch activities',
+          details: error.response?.data?.details || error.toString()
+        }
+      };
     }
+  }
+  
+  /**
+   * Helper method to get auth token
+   * @private
+   * @returns {Promise<string>} - Auth token
+   */
+  async getAuthToken() {
+    const { data } = await supabase.auth.getSession();
+    return data?.session?.access_token || '';
   }
   
   // -------- ACCOMPLISHMENTS -------- //
