@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Card, Button, Form, Row, Col, Dropdown, OverlayTrigger, Tooltip, Alert } from 'react-bootstrap';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { 
@@ -15,7 +15,9 @@ import {
   faFileAlt,
   faEllipsisH,
   faKeyboard,
-  faExclamationTriangle
+  faExclamationTriangle,
+  faHourglass,
+  faUndo
 } from '@fortawesome/free-solid-svg-icons';
 import WorkProgressService from '../../services/WorkProgressService';
 import axios from 'axios';
@@ -44,16 +46,38 @@ const styles = {
     transition: 'all 0.3s ease'
   },
   timerDisplay: {
-    fontSize: '2rem',
+    fontSize: '24px',
     fontWeight: 'bold',
-    textAlign: 'center',
-    margin: '15px 0',
-    fontFamily: 'monospace'
+    fontFamily: 'monospace',
+    letterSpacing: '1px',
   },
   keyboardShortcut: {
-    fontSize: '0.8rem',
-    color: '#6c757d',
-    marginLeft: '5px'
+    fontSize: '12px',
+    opacity: 0.7,
+    fontWeight: 'normal'
+  },
+  button: {
+    borderRadius: '4px',
+    fontWeight: '500'
+  },
+  timerSection: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    padding: '10px',
+    background: '#f8f9fa',
+    borderRadius: '5px',
+    marginBottom: '15px'
+  },
+  totalTimerSection: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    padding: '10px',
+    background: '#e9ecef',
+    borderRadius: '5px',
+    border: '1px solid #dee2e6',
+    marginBottom: '15px'
   }
 };
 
@@ -71,6 +95,7 @@ const KeyboardShortcut = ({ keys }) => (
 const ActivityTracker = ({ activeSession, onStartSession, onEndSession }) => {
   // State variables
   const [timer, setTimer] = useState({ hours: 0, minutes: 0, seconds: 0 });
+  const [totalTimer, setTotalTimer] = useState({ hours: 0, minutes: 0, seconds: 0 });
   const [description, setDescription] = useState('');
   const [activityType, setActivityType] = useState('work');
   const [currentActivity, setCurrentActivity] = useState(null);
@@ -78,11 +103,15 @@ const ActivityTracker = ({ activeSession, onStartSession, onEndSession }) => {
   const [isPaused, setIsPaused] = useState(false);
   const [sessionError, setSessionError] = useState(null);
   const [hasActiveSession, setHasActiveSession] = useState(false);
+  const [isLogging, setIsLogging] = useState(false);
+  const [showSuccessFeedback, setShowSuccessFeedback] = useState(false);
+  const [lastActivityEndTime, setLastActivityEndTime] = useState(null);
   
   // Refs
   const timerRef = useRef(null);
   const startTimeRef = useRef(null);
   const pausedTimeRef = useRef(0);
+  const totalTimeRef = useRef(0);
   const inputRef = useRef(null);
   
   // Activity type options
@@ -95,157 +124,33 @@ const ActivityTracker = ({ activeSession, onStartSession, onEndSession }) => {
     { value: 'other', label: 'Other', icon: faEllipsisH }
   ];
   
-  // Add these state declarations at the top with the other state variables
-  const [isLogging, setIsLogging] = useState(false);
-  const [showSuccessFeedback, setShowSuccessFeedback] = useState(false);
-  
   // Format timer values to two digits
   const formatTime = (value) => {
     return value.toString().padStart(2, '0');
   };
   
-  // Start the timer
-  const startTimer = () => {
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-    }
+  // Define handleEndActivity first to avoid circular dependencies
+  const handleEndActivity = async (activityToEnd) => {
+    const targetActivity = activityToEnd || currentActivity;
+    if (!targetActivity) return { success: false, error: 'No active activity to end' };
     
-    startTimeRef.current = Date.now() - pausedTimeRef.current;
-    
-    timerRef.current = setInterval(() => {
-      const elapsedTime = Date.now() - startTimeRef.current;
-      const seconds = Math.floor((elapsedTime / 1000) % 60);
-      const minutes = Math.floor((elapsedTime / (1000 * 60)) % 60);
-      const hours = Math.floor(elapsedTime / (1000 * 60 * 60));
-      
-      setTimer({ hours, minutes, seconds });
-    }, 1000);
-    
-    setIsTimerRunning(true);
-    setIsPaused(false);
-  };
-  
-  // Pause the timer
-  const pauseTimer = () => {
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      pausedTimeRef.current = Date.now() - startTimeRef.current;
-    }
-    
-    setIsTimerRunning(false);
-    setIsPaused(true);
-  };
-  
-  // Stop the timer
-  const stopTimer = () => {
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-    }
-    
-    setTimer({ hours: 0, minutes: 0, seconds: 0 });
-    setIsTimerRunning(false);
-    setIsPaused(false);
-    pausedTimeRef.current = 0;
-  };
-  
-  // Initialize or reset when activeSession changes
-  useEffect(() => {
-    // Clear any previous errors whenever activeSession changes
-    setSessionError(null);
-    
-    if (activeSession) {
-      console.log('ActivityTracker received active session:', activeSession.id);
-      setHasActiveSession(true);
-      
-      // Calculate elapsed time if session is active
-      if (activeSession.start_time) {
-        const startTime = new Date(activeSession.start_time).getTime();
-        const now = Date.now();
-        const elapsedTime = now - startTime;
-        
-        const seconds = Math.floor((elapsedTime / 1000) % 60);
-        const minutes = Math.floor((elapsedTime / (1000 * 60)) % 60);
-        const hours = Math.floor(elapsedTime / (1000 * 60 * 60));
-        
-        setTimer({ hours, minutes, seconds });
-        
-        // Start the timer
-        startTimeRef.current = startTime;
-        startTimer();
-      }
-    } else {
-      console.log('No active session provided to ActivityTracker');
-      setHasActiveSession(false);
-      // No active session, reset timer
-      stopTimer();
-    }
-    
-    // Cleanup timer on unmount
-    return () => {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-      }
-    };
-  }, [activeSession]);
-  
-  // Add global keyboard shortcuts
-  useEffect(() => {
-    const handleKeyDown = (e) => {
-      // Alt+L to log activity if session is active
-      if (e.altKey && e.key === 'l' && hasActiveSession && description.trim() && !isLogging) {
-        e.preventDefault();
-        handleStartActivity();
-      }
-      // Alt+P to pause/resume timer if session is active
-      else if (e.altKey && e.key === 'p' && hasActiveSession) {
-        e.preventDefault();
-        isTimerRunning ? pauseTimer() : startTimer();
-      }
-      // Alt+S to start session if no active session
-      else if (e.altKey && e.key === 's' && !hasActiveSession) {
-        e.preventDefault();
-        handleStartSession();
-      }
-    };
-    
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [hasActiveSession, description, isLogging, isTimerRunning]);
-  
-  // Handle session start
-  const handleStartSession = async () => {
     try {
-      setSessionError(null);
-      const session = await onStartSession();
+      console.log('Ending activity:', targetActivity.id);
+      const result = await WorkProgressService.endActivity(targetActivity.id);
       
-      if (session) {
-        startTimer();
-        // Start the initial activity
-        handleStartActivity();
-      } else {
-        setSessionError('Failed to start work session. Please try again.');
+      if (result.error) {
+        console.error('Error ending activity:', result.error);
+        return { success: false, error: result.error };
       }
+      
+      if (targetActivity.id === currentActivity?.id) {
+        setCurrentActivity(null);
+      }
+      return { success: true, data: result.data };
     } catch (error) {
-      console.error('Error in handleStartSession:', error);
-      setSessionError(error.message || 'Failed to start work session');
+      console.error('Error in handleEndActivity:', error);
+      return { success: false, error: error.message || 'Failed to end activity' };
     }
-  };
-  
-  // Handle session end
-  const handleEndSession = async () => {
-    // End current activity if any
-    if (currentActivity) {
-      await handleEndActivity();
-    }
-    
-    // End the session
-    await onEndSession();
-    stopTimer();
-  };
-  
-  // Handle activity type selection
-  const handleActivityTypeSelect = (type) => {
-    setActivityType(type);
   };
   
   /**
@@ -390,8 +295,8 @@ const ActivityTracker = ({ activeSession, onStartSession, onEndSession }) => {
     return result;
   };
   
-  // Start a new activity
-  const handleStartActivity = async () => {
+  // Start a new activity - defined early with useCallback to avoid dependency issues
+  const handleStartActivity = useCallback(async () => {
     if (!hasActiveSession) {
       setSessionError('No active work session. Please start a session first.');
       return;
@@ -415,7 +320,7 @@ const ActivityTracker = ({ activeSession, onStartSession, onEndSession }) => {
       
       // End current activity if exists
       if (currentActivity) {
-        const endResult = await handleEndActivity();
+        const endResult = await handleEndActivity(currentActivity);
         if (endResult?.error) {
           console.warn('Warning: Failed to end previous activity:', endResult.error);
           // Continue anyway - we'll still try to log the new activity
@@ -513,27 +418,236 @@ const ActivityTracker = ({ activeSession, onStartSession, onEndSession }) => {
     } finally {
       setIsLogging(false);
     }
+  }, [
+    hasActiveSession, 
+    description, 
+    activityType, 
+    activeSession, 
+    currentActivity
+  ]);
+  
+  // Start the timer
+  const startTimer = () => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+    }
+    
+    startTimeRef.current = Date.now() - pausedTimeRef.current;
+    
+    timerRef.current = setInterval(() => {
+      const elapsedTime = Date.now() - startTimeRef.current;
+      const seconds = Math.floor((elapsedTime / 1000) % 60);
+      const minutes = Math.floor((elapsedTime / (1000 * 60)) % 60);
+      const hours = Math.floor(elapsedTime / (1000 * 60 * 60));
+      
+      setTimer({ hours, minutes, seconds });
+      
+      // Update total time (previous accumulated time + current elapsed time)
+      const totalSeconds = Math.floor((totalTimeRef.current + elapsedTime) / 1000);
+      const totalHours = Math.floor(totalSeconds / 3600);
+      const totalMinutes = Math.floor((totalSeconds % 3600) / 60);
+      const remainingSeconds = totalSeconds % 60;
+      
+      setTotalTimer({ 
+        hours: totalHours, 
+        minutes: totalMinutes, 
+        seconds: remainingSeconds 
+      });
+    }, 1000);
+    
+    setIsTimerRunning(true);
+    setIsPaused(false);
   };
   
-  // End the current activity
-  const handleEndActivity = async () => {
-    if (!currentActivity) return { success: false, error: 'No active activity to end' };
-    
-    try {
-      console.log('Ending activity:', currentActivity.id);
-      const result = await WorkProgressService.endActivity(currentActivity.id);
+  // Pause the timer
+  const pauseTimer = () => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      const currentElapsedTime = Date.now() - startTimeRef.current;
+      pausedTimeRef.current = currentElapsedTime;
       
-      if (result.error) {
-        console.error('Error ending activity:', result.error);
-        return { success: false, error: result.error };
-      }
-      
-      setCurrentActivity(null);
-      return { success: true, data: result.data };
-    } catch (error) {
-      console.error('Error in handleEndActivity:', error);
-      return { success: false, error: error.message || 'Failed to end activity' };
+      // Update total accumulated time
+      totalTimeRef.current += currentElapsedTime;
     }
+    
+    setIsTimerRunning(false);
+    setIsPaused(true);
+  };
+  
+  // Stop the timer
+  const stopTimer = () => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      
+      // If timer was running, add the final elapsed time to total
+      if (isTimerRunning && startTimeRef.current) {
+        totalTimeRef.current += (Date.now() - startTimeRef.current);
+      }
+    }
+    
+    setTimer({ hours: 0, minutes: 0, seconds: 0 });
+    // Keep total timer as is when stopping - it preserves the cumulative time
+    setIsTimerRunning(false);
+    setIsPaused(false);
+    pausedTimeRef.current = 0;
+  };
+  
+  // Reset all timers and counters
+  const resetTimers = useCallback(() => {
+    setTimer({ hours: 0, minutes: 0, seconds: 0 });
+    setTotalTimer({ hours: 0, minutes: 0, seconds: 0 });
+    setLastActivityEndTime(null);
+  }, []);
+  
+  // Initialize or reset when activeSession changes
+  useEffect(() => {
+    // Clear any previous errors whenever activeSession changes
+    setSessionError(null);
+    
+    if (activeSession) {
+      console.log('ActivityTracker received active session:', activeSession.id);
+      setHasActiveSession(true);
+      
+      // Calculate elapsed time if session is active
+      if (activeSession.start_time) {
+        const startTime = new Date(activeSession.start_time).getTime();
+        const now = Date.now();
+        const elapsedTime = now - startTime;
+        
+        const seconds = Math.floor((elapsedTime / 1000) % 60);
+        const minutes = Math.floor((elapsedTime / (1000 * 60)) % 60);
+        const hours = Math.floor(elapsedTime / (1000 * 60 * 60));
+        
+        setTimer({ hours, minutes, seconds });
+        
+        // Start the timer
+        startTimeRef.current = startTime;
+        // Reset total time for new session
+        resetTimers();
+        startTimer();
+      }
+    } else {
+      console.log('No active session provided to ActivityTracker');
+      setHasActiveSession(false);
+      // No active session, reset timer
+      resetTimers();
+    }
+    
+    // Cleanup timer on unmount
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+      }
+    };
+  }, [activeSession]);
+  
+  // Add global keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      // Only trigger if Alt key is pressed with the shortcut
+      if (e.altKey) {
+        switch (e.key.toLowerCase()) {
+          case 's':
+            if (!hasActiveSession) handleStartSession();
+            e.preventDefault();
+            break;
+          case 'p':
+            if (hasActiveSession) pauseTimer();
+            e.preventDefault();
+            break;
+          case 'e':
+            if (hasActiveSession) handleEndSession();
+            e.preventDefault();
+            break;
+          case 'l':
+            if (hasActiveSession && description.trim() && !isLogging) {
+              document.querySelector('input[placeholder="Describe your current activity..."]')?.focus();
+              // Call the Log button action with a slight delay to avoid dependency issues
+              setTimeout(() => {
+                // Double-check conditions again in case they changed
+                if (hasActiveSession && description.trim() && !isLogging) {
+                  const logButton = document.querySelector('button.w-100');
+                  if (logButton && !logButton.disabled) {
+                    logButton.click();
+                  }
+                }
+              }, 10);
+            }
+            e.preventDefault();
+            break;
+          default:
+            break;
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [hasActiveSession, description, isLogging]);
+  
+  // Handle session start
+  const handleStartSession = async () => {
+    try {
+      setSessionError(null);
+      // Wait for the session to start completely
+      const session = await onStartSession();
+      
+      if (session) {
+        startTimer();
+        // Only try to start the initial activity if needed
+        // This prevents potential issues with handleStartActivity being called too early
+        if (description && description.trim().length >= 3) {
+          try {
+            // Start the initial activity
+            await handleStartActivity();
+          } catch (activityError) {
+            console.error("Error starting initial activity:", activityError);
+            // Don't fail the whole session start if activity fails
+          }
+        }
+      } else {
+        setSessionError('Failed to start work session. Please try again.');
+      }
+    } catch (error) {
+      console.error('Error in handleStartSession:', error);
+      setSessionError(error.message || 'Failed to start work session');
+    }
+  };
+  
+  // Handle session end
+  const handleEndSession = async () => {
+    // End current activity if any
+    if (currentActivity) {
+      await handleEndActivity();
+    }
+    
+    // If timer is running, add the final time to total
+    if (isTimerRunning && startTimeRef.current) {
+      totalTimeRef.current += (Date.now() - startTimeRef.current);
+      
+      // Update the total timer display one last time
+      const totalSeconds = Math.floor(totalTimeRef.current / 1000);
+      const totalHours = Math.floor(totalSeconds / 3600);
+      const totalMinutes = Math.floor((totalSeconds % 3600) / 60);
+      const remainingSeconds = totalSeconds % 60;
+      
+      setTotalTimer({ 
+        hours: totalHours, 
+        minutes: totalMinutes, 
+        seconds: remainingSeconds 
+      });
+    }
+    
+    // End the session
+    await onEndSession();
+    stopTimer();
+  };
+  
+  // Handle activity type selection
+  const handleActivityTypeSelect = (type) => {
+    setActivityType(type);
   };
   
   return (
@@ -559,8 +673,22 @@ const ActivityTracker = ({ activeSession, onStartSession, onEndSession }) => {
           </div>
         </div>
         
-        <div className="timer-display" style={styles.timerDisplay}>
-          {formatTime(timer.hours)}:{formatTime(timer.minutes)}:{formatTime(timer.seconds)}
+        <div className="d-flex justify-content-between align-items-center mb-3">
+          <div className="timer-section" style={styles.timerSection}>
+            <small className="text-muted">Current:</small>
+            <div className="timer-display" style={styles.timerDisplay}>
+              {formatTime(timer.hours)}:{formatTime(timer.minutes)}:{formatTime(timer.seconds)}
+            </div>
+          </div>
+          <div className="timer-section" style={{...styles.timerSection, ...styles.totalTimerSection}}>
+            <small className="text-muted">
+              <FontAwesomeIcon icon={faHourglass} className="me-1" />
+              Total Session:
+            </small>
+            <div className="timer-display" style={{...styles.timerDisplay, color: '#28a745'}}>
+              {formatTime(totalTimer.hours)}:{formatTime(totalTimer.minutes)}:{formatTime(totalTimer.seconds)}
+            </div>
+          </div>
         </div>
         
         <Row className="align-items-end mb-3">
@@ -653,44 +781,65 @@ const ActivityTracker = ({ activeSession, onStartSession, onEndSession }) => {
           </Row>
         )}
         
-        <Row>
-          <Col>
-            {!hasActiveSession ? (
-              // Start session button
-              <Button variant="success" className="me-2" onClick={handleStartSession}>
-                <FontAwesomeIcon icon={faPlay} className="me-2" />
-                Start Work Session
+        <div className="d-flex gap-2 flex-wrap mt-3 mb-3">
+          {!hasActiveSession ? (
+            <Button 
+              variant="success" 
+              onClick={handleStartSession} 
+              style={styles.button}
+              disabled={isLogging}
+            >
+              <FontAwesomeIcon icon={faPlay} className="me-2" />
+              Start Session <span style={styles.keyboardShortcut}>(Alt+S)</span>
+            </Button>
+          ) : (
+            <>
+              <Button 
+                variant={isTimerRunning ? "warning" : "success"} 
+                onClick={isTimerRunning ? pauseTimer : startTimer} 
+                style={styles.button}
+                disabled={isLogging}
+              >
+                <FontAwesomeIcon icon={isTimerRunning ? faPause : faPlay} className="me-2" />
+                {isTimerRunning ? "Pause" : "Resume"} <span style={styles.keyboardShortcut}>(Alt+P)</span>
               </Button>
-            ) : (
-              // Session control buttons
-              <>
-                {isTimerRunning ? (
-                  <Button variant="warning" className="me-2" onClick={pauseTimer}>
-                    <FontAwesomeIcon icon={faPause} className="me-2" />
-                    Pause
-                  </Button>
-                ) : (
-                  <Button variant="primary" className="me-2" onClick={startTimer}>
-                    <FontAwesomeIcon icon={faPlay} className="me-2" />
-                    Resume
-                  </Button>
-                )}
-                <Button variant="danger" onClick={handleEndSession}>
-                  <FontAwesomeIcon icon={faStop} className="me-2" />
-                  End Session
+              
+              <Button 
+                variant="danger" 
+                onClick={handleEndSession} 
+                style={styles.button}
+                disabled={isLogging}
+              >
+                <FontAwesomeIcon icon={faStop} className="me-2" />
+                End Session <span style={styles.keyboardShortcut}>(Alt+E)</span>
+              </Button>
+              
+              {(timer.hours > 0 || timer.minutes > 0 || timer.seconds > 0 ||
+                totalTimer.hours > 0 || totalTimer.minutes > 0 || totalTimer.seconds > 0) && (
+                <Button 
+                  variant="outline-secondary" 
+                  onClick={resetTimers} 
+                  style={styles.button}
+                  disabled={isLogging}
+                >
+                  <FontAwesomeIcon icon={faUndo} className="me-2" />
+                  Reset Timers
                 </Button>
-              </>
-            )}
-          </Col>
-          {hasActiveSession && activeSession && (
-            <Col className="text-end">
+              )}
+            </>
+          )}
+        </div>
+        
+        {hasActiveSession && activeSession && (
+          <Row className="mt-3">
+            <Col>
               <span className="text-muted">
                 <FontAwesomeIcon icon={faCalendarDay} className="me-1" />
                 Started: {new Date(activeSession.start_time).toLocaleTimeString()}
               </span>
             </Col>
-          )}
-        </Row>
+          </Row>
+        )}
         
         {currentActivity && (
           <Row className="mt-3">
